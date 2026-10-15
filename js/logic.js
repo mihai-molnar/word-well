@@ -30,6 +30,20 @@
   };
   const TYPES = Object.keys(SHAPES);
   const KICKS = [[0, 0], [-1, 0], [1, 0], [-2, 0], [2, 0], [0, -1], [-1, -1], [1, -1]];
+  // Indices of each shape's bottom-row cells, left to right: where a target chunk sits. Rotating
+  // clockwise once turns that row into a column that reads top to bottom in the same order.
+  const BOTTOM_ROW = {};
+  for (const t of TYPES) {
+    const cells = SHAPES[t].cells;
+    const maxY = Math.max(...cells.map(c => c[1]));
+    BOTTOM_ROW[t] = cells.map((c, i) => i).filter(i => cells[i][1] === maxY).sort((i, j) => cells[i][0] - cells[j][0]);
+  }
+
+  // Target words: the dealer spells one over two pieces, then leaves room before the next.
+  const TARGET_WINDOW = 3; // pieces you get after the last chunk lands
+  const TARGET_GAP = 2; // plain pieces between one target's window and the next target
+  const FIRST_TARGET = 3; // plain pieces before the first target
+  const TARGET_BONUS = 3; // score multiplier for spelling the target
 
   function isVowel(ch) {
     return ch === 'a' || ch === 'e' || ch === 'i' || ch === 'o' || ch === 'u';
@@ -88,17 +102,22 @@
     return Array.from({ length: rows }, () => new Array(cols).fill(null));
   }
 
-  function createPiece(type, letters) {
+  // target (optional): { word, idx, last } marks cells idx as reserved for the target word.
+  function createPiece(type, letters, target) {
     const shape = SHAPES[type];
-    const cells = shape.cells.map(([x, y], i) => ({ x, y, ch: letters[i] }));
-    return { type, n: shape.n, x: 0, y: 0, cells };
+    const cells = shape.cells.map(([x, y], i) => {
+      const c = { x, y, ch: letters[i] };
+      if (target && target.idx.includes(i)) c.tgt = target.word;
+      return c;
+    });
+    return { type, n: shape.n, x: 0, y: 0, cells, target };
   }
 
   // Letters ride along with their squares, so rotating re-arranges the reading order.
   function rotateCells(cells, n, dir) {
     return cells.map(c => (dir > 0
-      ? { x: n - 1 - c.y, y: c.x, ch: c.ch }
-      : { x: c.y, y: n - 1 - c.x, ch: c.ch }));
+      ? { ...c, x: n - 1 - c.y, y: c.x }
+      : { ...c, x: c.y, y: n - 1 - c.x }));
   }
 
   function collides(grid, piece, dx, dy, cells = piece.cells) {
@@ -123,6 +142,7 @@
 
   // Searches every row (left to right) and column (top to bottom). Within one unbroken run of
   // tiles the longest words win and may not overlap; an across and a down word may share a tile.
+  // A tile reserved for a target word (tile.tgt) only clears as part of a word containing that target.
   function findWords(grid, dict, minLen = 3) {
     const rows = grid.length;
     const cols = grid[0].length;
@@ -150,7 +170,7 @@
       for (let b = a; b < e; b++) {
         str += get(b).ch;
         if (str.length > dict.maxLen) break;
-        if (str.length >= minLen && dict.words.has(str)) cands.push({ a, b, str });
+        if (str.length >= minLen && dict.words.has(str) && respectsTargets(a, b, str, get)) cands.push({ a, b, str });
       }
     }
     if (!cands.length) return;
@@ -163,6 +183,14 @@
       for (let i = c.a; i <= c.b; i++) cells.push(pos(i));
       found.push({ word: c.str, dir, cells });
     }
+  }
+
+  function respectsTargets(a, b, str, get) {
+    for (let i = a; i <= b; i++) {
+      const t = get(i).tgt;
+      if (t && !str.includes(t)) return false;
+    }
+    return true;
   }
 
   // Unlike classic Tetris, cleared squares leave holes, so every column settles on its own.
@@ -207,21 +235,23 @@
     return tiles < 8 ? null : vowels / tiles;
   }
 
-  // Every across/down run of 2+ letters inside a piece, read left-to-right / top-to-bottom.
+  // Every across/down run of 2+ letters inside a piece, read left-to-right / top-to-bottom. Runs that
+  // touch a reserved target cell are left out: those letters can only ever form the target.
   function runsOf(cells) {
-    const at = new Map(cells.map(c => [c.x + ',' + c.y, c.ch]));
+    const at = new Map(cells.map(c => [c.x + ',' + c.y, c]));
     const runs = [];
+    const read = (x, y, dx, dy) => {
+      let s = '';
+      for (; at.has(x + ',' + y); x += dx, y += dy) {
+        const c = at.get(x + ',' + y);
+        if (c.tgt) return;
+        s += c.ch;
+      }
+      runs.push(s);
+    };
     for (const c of cells) {
-      if (!at.has((c.x - 1) + ',' + c.y) && at.has((c.x + 1) + ',' + c.y)) {
-        let s = '';
-        for (let x = c.x; at.has(x + ',' + c.y); x++) s += at.get(x + ',' + c.y);
-        runs.push(s);
-      }
-      if (!at.has(c.x + ',' + (c.y - 1)) && at.has(c.x + ',' + (c.y + 1))) {
-        let s = '';
-        for (let y = c.y; at.has(c.x + ',' + y); y++) s += at.get(c.x + ',' + y);
-        runs.push(s);
-      }
+      if (!at.has((c.x - 1) + ',' + c.y) && at.has((c.x + 1) + ',' + c.y)) read(c.x, c.y, 1, 0);
+      if (!at.has(c.x + ',' + (c.y - 1)) && at.has(c.x + ',' + (c.y + 1))) read(c.x, c.y, 0, 1);
     }
     return runs;
   }
@@ -232,12 +262,16 @@
   //  - at most one rare letter (J K QU V X Z) per piece and no letter three times
   //  - every across/down run inside the piece must occur inside a real word ("TRYX" never appears)
   //  - a piece never arrives already spelling a word (no free clears)
+  // With opts.targets (a word list) it also deals target words: see planTarget.
   class PieceGenerator {
     constructor(dict, opts = {}) {
       this.dict = dict;
       this.rng = opts.rng || Math.random;
       this.minLen = opts.minLen || 3;
+      this.targets = opts.targets && opts.targets.length ? opts.targets : null;
       this.bag = [];
+      this.plan = [];
+      this.untilTarget = FIRST_TARGET;
     }
 
     nextType() {
@@ -246,8 +280,52 @@
     }
 
     next(boardVowelRatio = null) {
+      if (!this.plan.length && this.targets && this.untilTarget-- <= 0) {
+        this.plan = this.planTarget(boardVowelRatio);
+        this.untilTarget = TARGET_WINDOW + TARGET_GAP;
+      }
+      if (this.plan.length) return this.plan.shift();
       const type = this.nextType();
       return { type, letters: this.lettersFor(type, boardVowelRatio) };
+    }
+
+    // Splits a random target word over two pieces, the word's end first: put the start to its left
+    // (across) or drop it on top after one clockwise turn (down).
+    planTarget(boardVowelRatio) {
+      const word = this.targets[Math.floor(this.rng() * this.targets.length)];
+      const sizes = [2, 3, 4].filter(b => word.length - b >= 2 && word.length - b <= 4);
+      const b = sizes[Math.floor(this.rng() * sizes.length)];
+      return [
+        this.chunkPiece(word, word.slice(b), false, boardVowelRatio),
+        this.chunkPiece(word, word.slice(0, b), true, boardVowelRatio),
+      ];
+    }
+
+    // The chunk sits in the bottom row: the end chunk flush left, the start chunk flush right, so
+    // filler letters never land between the two halves.
+    chunkPiece(word, chunk, last, boardVowelRatio) {
+      const fits = TYPES.filter(t => BOTTOM_ROW[t].length >= chunk.length);
+      const exact = fits.filter(t => BOTTOM_ROW[t].length === chunk.length);
+      const types = exact.length && this.rng() < 0.75 ? exact : fits;
+      const type = types[Math.floor(this.rng() * types.length)];
+      const row = BOTTOM_ROW[type];
+      const off = last ? row.length - chunk.length : 0;
+      const target = { word, idx: row.slice(off, off + chunk.length), last };
+      const place = letters => {
+        target.idx.forEach((cell, i) => { letters[cell] = chunk[i]; });
+        return letters;
+      };
+      let best = null;
+      let bestBad = Infinity;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const drawn = this.drawLetters(this.vowelCount(boardVowelRatio));
+        if (!drawn) continue;
+        const letters = place(drawn);
+        const bad = this.problems(type, letters, target);
+        if (bad === 0) return { type, letters, target };
+        if (bad < bestBad) { best = letters; bestBad = bad; }
+      }
+      return { type, letters: best || place(['e', 'a', 't', 'o']), target };
     }
 
     vowelCount(boardVowelRatio) {
@@ -278,9 +356,9 @@
       return true;
     }
 
-    problems(type, letters) {
+    problems(type, letters, target) {
       let bad = 0;
-      for (const run of runsOf(createPiece(type, letters).cells)) {
+      for (const run of runsOf(createPiece(type, letters, target).cells)) {
         if (!this.readable(run)) bad += 2;
         else if (run.length >= this.minLen && this.dict.words.has(run)) bad += 1;
       }
@@ -301,10 +379,57 @@
     }
   }
 
+  // Follows the live target through a game: placed() on every lock, hit() on every resolve pass and
+  // endTurn() once the board has settled. The target expires TARGET_WINDOW pieces after its last
+  // chunk lands; when it ends (hit or expired) its leftover tiles become ordinary letters.
+  class TargetTracker {
+    constructor(window = TARGET_WINDOW) {
+      this.window = window;
+      this.word = null;
+      this.left = Infinity; // pieces left, counted once the last chunk is down
+      this.turn = undefined; // target info of the piece placed this turn (null: a plain piece)
+    }
+
+    placed(info) {
+      this.turn = info || null;
+      if (info) this.word = info.word;
+    }
+
+    // The found words that spell the live target (they score the bonus). A hit ends the target.
+    hit(grid, found) {
+      const word = this.word;
+      if (!word) return [];
+      const hits = found.filter(w => w.word.includes(word) && w.cells.some(c => grid[c.y][c.x].tgt === word));
+      if (hits.length) this.end(grid);
+      return hits;
+    }
+
+    // Returns the target word if it just expired. Only the first call after a placed() counts.
+    endTurn(grid) {
+      const info = this.turn;
+      this.turn = undefined;
+      if (info === undefined) return null;
+      if (info) {
+        if (info.last && this.word === info.word) this.left = this.window;
+        return null;
+      }
+      if (!this.word || --this.left > 0) return null;
+      const word = this.word;
+      this.end(grid);
+      return word;
+    }
+
+    end(grid) {
+      this.word = null;
+      this.left = Infinity;
+      for (const row of grid) for (const t of row) if (t && t.tgt) delete t.tgt;
+    }
+  }
+
   const api = {
-    COLS, ROWS, SHAPES, TYPES, POINTS,
+    COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS,
     isVowel, makeRng, buildDictionary, emptyGrid, createPiece, rotateCells, collides, tryRotate,
-    findWords, applyGravity, scoreWord, vowelRatio, runsOf, PieceGenerator,
+    findWords, applyGravity, scoreWord, vowelRatio, runsOf, PieceGenerator, TargetTracker,
   };
   root.WordWellLogic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

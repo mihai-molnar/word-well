@@ -5,6 +5,7 @@
   const L = window.WordWellLogic;
   const FONT = window.WordWellFont;
   const dict = L.buildDictionary(window.WORDLIST || '');
+  const TARGETS = (window.TARGETS || '').split(' ').filter(Boolean);
 
   // ---- layout, in internal pixels (the canvas is scaled up by a whole-number factor) ----
   const W = 320, H = 272;
@@ -105,7 +106,8 @@
   }
 
   // Tile looks: locked (white stone), active (red), ghost (dotted), hint (part of a word the ghost
-  // would complete), flash/flashRed (being cleared), dead (game over wipe).
+  // would complete), flash/flashRed (being cleared), dead (game over wipe). Letters reserved for the
+  // target word are red: target/targetHint when locked, activeTarget (white square) while falling.
   const tileCache = new Map();
   function tileSprite(ch, style) {
     const k = style + ':' + ch;
@@ -142,6 +144,9 @@
       case 'flash': fill(WHITE); letter = BLACK; break;
       case 'flashRed': fill(RED); letter = BLACK; break;
       case 'dead': outline(RED); lip(RED); letter = RED; break;
+      case 'target': outline(WHITE); lip(WHITE); letter = RED; break;
+      case 'targetHint': outline(RED); lip(RED); letter = RED; break;
+      case 'activeTarget': fill(WHITE); letter = RED; break;
     }
     if (ch === 'qu') {
       paintBitmap(g, FONT.glyphs.Q, 1, 2, letter);
@@ -265,6 +270,8 @@
         tone(1500 + Math.random() * 500, 0.04, { vol: 0.02, type: 'triangle' });
       },
       level: () => [0, 4, 7, 12].forEach((s, i) => tone(semi(392, s), 0.12, { vol: 0.05, delay: i * 0.08, type: 'triangle' })),
+      target: () => [0, 7, 12, 16, 19, 24].forEach((s, i) => tone(semi(523, s), 0.09, { vol: 0.04, delay: i * 0.05, type: 'triangle' })),
+      missed: () => [0, -5].forEach((s, i) => tone(semi(220, s), 0.12, { vol: 0.04, delay: i * 0.1 })),
       over: () => [0, -3, -7, -12].forEach((s, i) => tone(semi(330, s), 0.2, { vol: 0.05, delay: i * 0.15, slide: 0.9 })),
     };
   })();
@@ -279,10 +286,12 @@
 
   let grid = L.emptyGrid();
   let gen = null;
+  let tracker = null; // the live target word (L.TargetTracker)
   let piece = null;
   let queue = [];
   let score = 0, shownScore = 0, wordsCleared = 0, level = 1, chain = 0, maxChain = 0;
   let longest = '', newBest = false;
+  let targetsHit = 0, targetsSeen = 0;
   let dropTimer = 0, lockTimer = 0, lockResets = 0;
   let clearing = null;
   let hint = { cells: new Set(), words: [] };
@@ -292,9 +301,11 @@
 
   function newGame() {
     grid = L.emptyGrid();
-    gen = new L.PieceGenerator(dict, { minLen });
+    gen = new L.PieceGenerator(dict, { minLen, targets: TARGETS });
+    tracker = new L.TargetTracker();
     queue = [gen.next(null), gen.next(null)];
     score = shownScore = wordsCleared = chain = maxChain = 0;
+    targetsHit = targetsSeen = 0;
     level = 1;
     longest = '';
     newBest = false;
@@ -310,8 +321,10 @@
 
   function spawn() {
     const next = queue.shift();
-    queue.push(gen.next(L.vowelRatio(grid)));
-    piece = L.createPiece(next.type, next.letters);
+    const dealt = gen.next(L.vowelRatio(grid));
+    queue.push(dealt);
+    if (dealt.target && !dealt.target.last) showBanner('TARGET ' + dealt.target.word.toUpperCase());
+    piece = L.createPiece(next.type, next.letters, next.target);
     piece.x = Math.floor((COLS - piece.n) / 2);
     piece.y = -Math.min(...piece.cells.map(c => c.y));
     dropTimer = lockTimer = lockResets = 0;
@@ -337,7 +350,7 @@
     for (const c of piece.cells) {
       const y = piece.y + c.y + d;
       if (y < 0) return;
-      tmp[y][piece.x + c.x] = { ch: c.ch };
+      tmp[y][piece.x + c.x] = { ch: c.ch, tgt: c.tgt };
     }
     for (const w of L.findWords(tmp, dict, minLen)) {
       hint.words.push(w.word);
@@ -392,8 +405,11 @@
     for (const c of piece.cells) {
       const y = piece.y + c.y;
       if (y < 0) { gameOver(); return; }
-      grid[y][piece.x + c.x] = { ch: c.ch, dy: 0, vy: 0 };
+      const tile = { ch: c.ch, dy: 0, vy: 0 };
+      if (c.tgt) tile.tgt = c.tgt;
+      grid[y][piece.x + c.x] = tile;
     }
+    tracker.placed(piece.target);
     piece = null;
     hint = { cells: new Set(), words: [] };
     sfx.lock();
@@ -401,16 +417,31 @@
   }
 
   // Look for words; if any, flash them (state 'clearing'), then remove them and let columns
-  // settle (state 'settling'), then look again: each extra pass is a chain.
+  // settle (state 'settling'), then look again: each extra pass is a chain. Once the board is still,
+  // a target whose window has run out expires and its freed letters get one more look.
   function resolve() {
     const found = L.findWords(grid, dict, minLen);
-    if (!found.length) { chain = 0; spawn(); return; }
+    if (!found.length) {
+      const missed = tracker.endTurn(grid);
+      if (missed) {
+        targetsSeen++;
+        showBanner('MISSED ' + missed.toUpperCase());
+        sfx.missed();
+        resolve();
+        return;
+      }
+      chain = 0;
+      spawn();
+      return;
+    }
+    const hits = new Set(tracker.hit(grid, found));
+    if (hits.size) { targetsHit++; targetsSeen++; }
     chain++;
     maxChain = Math.max(maxChain, chain);
     const cells = new Set();
     let gained = 0;
     found.forEach((w, i) => {
-      const pts = L.scoreWord(w.word, chain);
+      const pts = L.scoreWord(w.word, chain) * (hits.has(w) ? L.TARGET_BONUS : 1);
       gained += pts;
       for (const p of w.cells) cells.add(key(p.x, p.y));
       const cx = Math.round(w.cells.reduce((s, p) => s + cellPx(p.x), 0) / w.cells.length) + 5;
@@ -423,8 +454,13 @@
     recent.length = Math.min(recent.length, 22);
     clearing = { found, cells, gained, t: 0 };
     state = 'clearing';
-    if (chain > 1) showBanner('CHAIN X' + chain);
-    sfx.word(chain, Math.max(...found.map(w => w.word.length)));
+    if (hits.size) {
+      showBanner('TARGET X' + L.TARGET_BONUS);
+      sfx.target();
+    } else {
+      if (chain > 1) showBanner('CHAIN X' + chain);
+      sfx.word(chain, Math.max(...found.map(w => w.word.length)));
+    }
   }
 
   function finishClear() {
@@ -693,7 +729,8 @@
         let style = 'locked';
         if (clearing && clearing.cells.has(k)) style = Math.floor(clearing.t / 60) % 2 ? 'flashRed' : 'flash';
         else if (state === 'over' && y >= ROWS - wiped) style = 'dead';
-        else if (pulse && hint.cells.has(k)) style = 'hint';
+        else if (pulse && hint.cells.has(k)) style = t.tgt ? 'targetHint' : 'hint';
+        else if (t.tgt) style = 'target';
         ctx.drawImage(tileSprite(t.ch, style), cellPx(x), cellPy(y) + Math.round(t.dy || 0));
       }
     }
@@ -710,7 +747,7 @@
         ctx.drawImage(tileSprite(c.ch, style), cellPx(x), cellPy(y));
       }
     }
-    for (const c of piece.cells) ctx.drawImage(tileSprite(c.ch, 'active'), cellPx(piece.x + c.x), cellPy(piece.y + c.y));
+    for (const c of piece.cells) ctx.drawImage(tileSprite(c.ch, c.tgt ? 'activeTarget' : 'active'), cellPx(piece.x + c.x), cellPy(piece.y + c.y));
   }
 
   function drawParticles() {
@@ -757,13 +794,14 @@
   }
 
   function drawMiniPiece(next, cx, cy, style) {
-    const cells = L.createPiece(next.type, next.letters).cells;
+    const cells = L.createPiece(next.type, next.letters, next.target).cells;
     const xs = cells.map(c => c.x), ys = cells.map(c => c.y);
     const minX = Math.min(...xs), minY = Math.min(...ys);
     const w = (Math.max(...xs) - minX + 1) * CELL - 1;
     const h = (Math.max(...ys) - minY + 1) * CELL - 1;
     const ox = cx - Math.floor(w / 2), oy = cy - Math.floor(h / 2);
-    for (const c of cells) ctx.drawImage(tileSprite(c.ch, style), ox + (c.x - minX) * CELL, oy + (c.y - minY) * CELL);
+    const tgtStyle = style === 'active' ? 'activeTarget' : 'target';
+    for (const c of cells) ctx.drawImage(tileSprite(c.ch, c.tgt ? tgtStyle : style), ox + (c.x - minX) * CELL, oy + (c.y - minY) * CELL);
   }
 
   function drawHUD() {
@@ -809,8 +847,7 @@
       drawText(value, RIGHT_X + PANEL_W, y + 10, color, { align: 'right' });
     };
     stat('BEST', String(Math.max(best, score)), 116);
-    stat('LONGEST', longest ? longest.toUpperCase().slice(0, 12) : '-', 140);
-    stat('CHAIN', 'X' + Math.max(1, maxChain), 164);
+    drawTargetPanel(140);
 
     drawHeader('HINT', RIGHT_X, 196);
     if (!showHints) drawText('OFF (H)', RIGHT_X, 212, GREY);
@@ -818,6 +855,26 @@
       hint.words.slice(0, 3).forEach((w, i) => drawText(w.toUpperCase().slice(0, 12), RIGHT_X, 212 + i * 10, RED));
     } else drawText('-', RIGHT_X, 212, GREY);
     drawText('MIN ' + minLen + (sfx.muted ? '  MUTE' : ''), RIGHT_X, 252, GREY);
+  }
+
+  // The live target (or the one on its way in NEXT), and how many pieces are left to spell it.
+  function drawTargetPanel(y) {
+    drawHeader('TARGET', RIGHT_X, y);
+    const upcoming = (piece && piece.target) || (queue.find(q => q.target) || {}).target;
+    const word = tracker.word || (upcoming && upcoming.word);
+    if (!word) { drawText('-', RIGHT_X, y + 16, GREY); return; }
+    const text = word.toUpperCase();
+    const scale = textWidth(text, 2) <= PANEL_W ? 2 : 1;
+    drawText(text, RIGHT_X, y + 16 + (scale === 1 ? 4 : 0), RED, { scale });
+    drawText('X' + L.TARGET_BONUS, RIGHT_X, y + 34, WHITE);
+    if (tracker.word && Number.isFinite(tracker.left)) {
+      for (let i = 0; i < L.TARGET_WINDOW; i++) {
+        const px = RIGHT_X + PANEL_W - (L.TARGET_WINDOW - i) * 8 + 1;
+        ctx.fillStyle = RED;
+        if (i < tracker.left) ctx.fillRect(px, y + 35, 6, 5);
+        else { ctx.fillRect(px, y + 35, 6, 1); ctx.fillRect(px, y + 39, 6, 1); ctx.fillRect(px, y + 35, 1, 5); ctx.fillRect(px + 5, y + 35, 1, 5); }
+      }
+    }
   }
 
   function drawTitlePanels() {
@@ -834,7 +891,8 @@
     [
       ['SPELL WORDS', WHITE], ['ACROSS → OR', WHITE], ['DOWN ↓.', WHITE], ['', WHITE],
       ['WORDS BREAK,', WHITE], ['TILES ABOVE', WHITE], ['FALL IN.', WHITE], ['', WHITE],
-      ['CHAINS AND', RED], ['LONG WORDS', RED], ['SCORE MORE.', RED],
+      ['CHAINS AND', RED], ['LONG WORDS', RED], ['SCORE MORE.', RED], ['', WHITE],
+      ['RED LETTERS', RED], ['MAKE THE', WHITE], ['TARGET WORD:', WHITE], ['JOIN THEM', WHITE], ['FOR X3.', WHITE],
     ].forEach(([t, c], i) => drawText(t, RIGHT_X, 42 + i * 10, c));
     drawText('BEST ' + best, RIGHT_X, 252, GREY);
   }
@@ -865,12 +923,19 @@
     if (overTime < 900) return;
     const cx = WELL_X + Math.floor(WELL_W / 2);
     ctx.fillStyle = BLACK;
-    ctx.fillRect(WELL_X + 2, WELL_Y + 70, WELL_W - 4, 100);
-    drawText('GAME', cx, WELL_Y + 78, WHITE, { scale: 2, align: 'center' });
-    drawText('OVER', cx, WELL_Y + 96, WHITE, { scale: 2, align: 'center' });
-    drawRuleBanner(String(score), WELL_Y + 120, WHITE);
-    if (newBest) drawText('NEW BEST!', cx, WELL_Y + 136, RED, { align: 'center' });
-    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER RETRY', cx, WELL_Y + 152, WHITE, { align: 'center' });
+    ctx.fillRect(WELL_X + 2, WELL_Y + 56, WELL_W - 4, 146);
+    drawText('GAME', cx, WELL_Y + 62, WHITE, { scale: 2, align: 'center' });
+    drawText('OVER', cx, WELL_Y + 80, WHITE, { scale: 2, align: 'center' });
+    drawRuleBanner(String(score), WELL_Y + 102, WHITE);
+    if (newBest) drawText('NEW BEST!', cx, WELL_Y + 116, RED, { align: 'center' });
+    const row = (label, value, y) => {
+      drawText(label, WELL_X + 8, y, GREY);
+      drawText(value, WELL_X + WELL_W - 8, y, WHITE, { align: 'right' });
+    };
+    row('LONGEST', longest ? longest.toUpperCase().slice(0, 9) : '-', WELL_Y + 134);
+    row('CHAIN', 'X' + Math.max(1, maxChain), WELL_Y + 146);
+    row('TARGETS', targetsHit + '/' + targetsSeen, WELL_Y + 158);
+    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER RETRY', cx, WELL_Y + 180, WHITE, { align: 'center' });
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -892,6 +957,8 @@
     get grid() { return grid; },
     get piece() { return piece; },
     get score() { return score; },
+    get queue() { return queue; },
+    get tracker() { return tracker; },
     newGame,
   };
 })();
