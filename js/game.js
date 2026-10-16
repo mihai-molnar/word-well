@@ -291,6 +291,7 @@
       take: () => [0, 7, 12].forEach((s, i) => tone(semi(523, s), 0.07, { vol: 0.05, delay: i * 0.05, type: 'square' })),
       level: () => [0, 4, 7, 12].forEach((s, i) => tone(semi(392, s), 0.12, { vol: 0.05, delay: i * 0.08, type: 'triangle' })),
       target: () => [0, 7, 12, 16, 19, 24].forEach((s, i) => tone(semi(523, s), 0.09, { vol: 0.04, delay: i * 0.05, type: 'triangle' })),
+      blast: () => { noise(0.25, 0.14); tone(160, 0.3, { vol: 0.06, slide: 0.3, type: 'sawtooth' }); },
       missed: () => [0, -5].forEach((s, i) => tone(semi(220, s), 0.12, { vol: 0.04, delay: i * 0.1 })),
       over: () => [0, -3, -7, -12].forEach((s, i) => tone(semi(330, s), 0.2, { vol: 0.05, delay: i * 0.15, slide: 0.9 })),
     };
@@ -511,14 +512,23 @@
   function extraCells(found, hits, cells) {
     // A target hit blasts its whole row (across) or column (down).
     for (const w of hits) for (const p of L.lineCells(grid, w)) cells.add(key(p.x, p.y));
-    // Track B adds CROSSFIRE (the crossing line of each hit) and QUAKE (the bottom row) here.
+    if (U.has(run, 'crossfire')) for (const w of hits) for (const p of L.crossCells(grid, w)) cells.add(key(p.x, p.y));
+    // QUAKE: the bottom row goes too (chain resets every turn, so at most once per turn).
+    if (U.quakeNow(run, chain)) for (const p of L.rowCells(grid, ROWS - 1)) cells.add(key(p.x, p.y));
   }
 
   // Every clear goes through here, word or not (DRILL and SINKHOLE too): cells is a Set of "x,y" keys.
   // Bombs in or next to the clear go off; a live target that loses a red tile ends at once (MISSED).
   // Nothing to clear means the board is already still, so it goes straight back to resolve().
   function startClear(found, cells, gained) {
+    const before = cells.size;
     cells = L.blastAround(grid, cells, found, U.bombRadius(run));
+    if (cells.size > before) {
+      sfx.blast();
+      shake = Math.max(shake, 4);
+      // Banner precedence: MISSED > TARGET > BOOM > CHAIN. A TARGET banner from this pass has t = 0.
+      if (!(banner && banner.t === 0 && banner.text.startsWith('TARGET X'))) showBanner('BOOM');
+    }
     const broken = tracker.broken(grid, cells);
     if (broken) {
       targetsSeen++;
@@ -824,7 +834,13 @@
   function fireWild() { return false; }
 
   // Track B: BOMB, DRILL
-  function fireBomb() { return false; }
+  function fireBomb() {
+    const i = L.pickFiller(piece, Math.random);
+    if (i < 0) return false;
+    piece.cells[i].ch = '';
+    piece.cells[i].bomb = true;
+    return true;
+  }
   function fireDrill() { return false; }
 
   // Track D: REROLL, I-BEAM, BEACON, FREEZE
