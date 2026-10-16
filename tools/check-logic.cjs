@@ -203,6 +203,11 @@ for (let seed = 1; seed <= 6; seed++) {
   assert.strictEqual(plan[0].target.word, 'strong', 'across beats down when both fit');
 }
 assert.strictEqual(planOn(L.emptyGrid(), 'I', ['strong']), null, 'no board letters, no target');
+// One piece when that's enough: STO + an O makes STORM; STORAGE would need a second piece.
+for (let seed = 1; seed <= 8; seed++) {
+  plan = planOn(well([19, 0, 'sto']), 'O', ['storm', 'storage'], seed);
+  assert.strictEqual(plan.length, 1, 'a one-piece target beats a two-piece one (seed ' + seed + ')');
+}
 
 // Targets come round on schedule, never overlapping; a second chunk comes right after its first.
 const tgen = new L.PieceGenerator(dict, { rng: L.makeRng(7), targets: window.TARGETS.split(' '), hookRate: 0 });
@@ -228,6 +233,12 @@ pgen.pending = 'O';
 const firstChunk = pgen.next(well([19, 0, 'st']));
 assert.ok(firstChunk.target && !firstChunk.target.last, 'an O cannot hold RONG, so STRONG takes two pieces');
 assert.strictEqual(pgen.peekType(), pgen.plan[0].type);
+// A target spelled before its second piece spawns: that piece keeps its shape but comes as plain letters.
+const late = pgen.plan[0];
+pgen.targetEnded();
+const lateDeal = pgen.next(well([19, 0, 'st']));
+assert.strictEqual(lateDeal.type, late.type, 'NEXT already showed this shape');
+assert.ok(!lateDeal.target && lateDeal.letters.every(Boolean), 'a dead target\'s piece has no red cells');
 
 // --- tracker: announce reserves the anchor; a hit or an expiry frees every red tile
 const stInfo = { word: 'strong', anchor: [{ x: 0, y: 0 }, { x: 1, y: 0 }] };
@@ -257,7 +268,7 @@ const T3 = new L.TargetTracker();
 const g10 = line(tg('ong', 'strong'));
 T3.placed({ word: 'strong', last: true });
 assert.strictEqual(T3.endTurn(g10), null);
-assert.ok(g10[0].every(t => !t || !t.tgt), 'a chunk of a target that already ended lands as plain letters');
+assert.ok(g10[0].every(t => !t || !t.tgt), 'a chunk of a target that already ended is freed when it lands');
 
 // Anchor tiles that fall (a clear beneath them) keep their mark and are still freed on expiry.
 const gf = L.emptyGrid(10, 3);

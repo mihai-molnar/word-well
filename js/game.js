@@ -436,7 +436,7 @@
       return;
     }
     const hits = new Set(tracker.hit(grid, found));
-    if (hits.size) { targetsHit++; targetsSeen++; }
+    if (hits.size) { targetsHit++; targetsSeen++; gen.targetEnded(); }
     chain++;
     maxChain = Math.max(maxChain, chain);
     const cells = new Set();
@@ -894,7 +894,7 @@
       ['SPELL WORDS', WHITE], ['ACROSS → OR', WHITE], ['DOWN ↓.', WHITE], ['', WHITE],
       ['WORDS BREAK,', WHITE], ['TILES ABOVE', WHITE], ['FALL IN.', WHITE], ['', WHITE],
       ['CHAINS AND', RED], ['LONG WORDS', RED], ['SCORE MORE.', RED], ['', WHITE],
-      ['RED LETTERS', RED], ['BEGIN A', WHITE], ['TARGET WORD.', WHITE], ['SPELL IT FOR', WHITE], ['X3 + BLAST.', WHITE],
+      ['RED LETTERS', RED], ['ARE PART OF', WHITE], ['THE TARGET.', WHITE], ['SPELL IT FOR', WHITE], ['X3 + BLAST.', WHITE],
     ].forEach(([t, c], i) => drawText(t, RIGHT_X, 42 + i * 10, c));
     drawText('BEST ' + best, RIGHT_X, 252, GREY);
   }

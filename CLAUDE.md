@@ -24,9 +24,9 @@ node tools/build-words.mjs [list] [freq]  # regenerate js/words.js (downloads bo
 | Dealer (sim row) | words/piece | games lost | 3-letter | 5+ letter words | hooks spelled | targets hit |
 |---|---|---|---|---|---|---|
 | `generator` | ≈1.23 | 0/8 | 76% | 1% | n/a | n/a |
-| `gen+targets` | ≈1.08 | 0/8 | 65% | 15% | n/a | 340/348 |
+| `gen+targets` | ≈1.09 | 0/8 | 66% | 15% | n/a | 350/359 |
 | `gen+hooks` | ≈1.01 | 0/8 | 34% | 28% | 1493/1665 | n/a |
-| `gen+hooks+tgts` (the game) | ≈0.93 | 0/8 | 31% | 37% | 1080/1277 | 340/351 |
+| `gen+hooks+tgts` (the game) | ≈0.94 | 0/8 | 29% | 39% | 1127/1281 | 347/351 |
 | `uniform A-Z` | ≈0.6 | 8/8 | 85% | 0% | n/a | n/a |
 
 At min 4, `gen+hooks+tgts` also loses 0/8 (the plain generator loses 8/8). Target blasts average under 1 extra tile at min 3, because the bot keeps the board almost empty. The bot searches every placement, finds every hook, and for a two-piece target sees the planned second chunk, so humans spell far fewer hooks and targets than it does.
@@ -88,7 +88,8 @@ Targets are the announced long word: they depend on the board and pay off by cle
   - the first piece uses the peeked shape and touches the anchor;
   - a second piece (`plan`) picks its own shape and continues the word on the far side.
 - `buildTarget` checks on a copy of the board that every chunk lands where planned and that the word fires.
-- **Across candidates are tried first.** Stacking down is almost always possible, so down targets would otherwise crowd across ones out (84% down before this rule, about 34% after).
+- **Across candidates are tried first, and within each direction one-piece targets come before two-piece ones.** Stacking down is almost always possible, so down targets would otherwise crowd across ones out (84% down before this rule, about a third after). A second piece is more of a chore, so it's only used when no one-piece target fits (about 40% of targets are one piece).
+- If the target is spelled before its second piece spawns, `game.js` calls `gen.targetEnded()`, and that piece arrives as plain letters.
 - Each chunk records its `spot`, and the first one carries `anchor`. Filler cells get the usual checks; `runsOf` skips runs that touch reserved cells.
 
 **Announcing.** When the first chunk spawns, `game.js` calls `tracker.announce(grid, target)`. The word goes live and the anchor tiles get `tgt`, so they turn red.

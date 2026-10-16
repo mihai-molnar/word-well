@@ -91,6 +91,7 @@ function play(dealer, minLen, maxPieces, rng, stats) {
       }
       if (hits.length) {
         stats.hits++;
+        if (dealer.targetEnded) dealer.targetEnded();
         const before = cells.size;
         for (const w of hits) for (const c of L.lineCells(grid, w)) cells.add(c.x + ',' + c.y);
         stats.blasted += cells.size - before;
@@ -113,6 +114,7 @@ function generator(rng, minLen, opts) {
   const gen = new L.PieceGenerator(dict, { rng, minLen, ...opts });
   const dealer = grid => gen.next(grid);
   dealer.planned = () => gen.plan[0] || null;
+  dealer.targetEnded = () => gen.targetEnded();
   return dealer;
 }
 const dealers = {

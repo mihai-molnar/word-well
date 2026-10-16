@@ -452,6 +452,12 @@
       return { type, letters: this.lettersFor(type, ratio) };
     }
 
+    // The live target was spelled before its second piece spawned: that piece keeps the shape NEXT
+    // shows but arrives as plain letters.
+    targetEnded() {
+      for (const d of this.plan) delete d.target;
+    }
+
     // Letters this piece so one of its straight segments, dropped at a hook spot, spells a word with
     // the board letters there. 5+ letter hooks win whenever there are any. Returns
     // { type, letters, hook: { word, rot, x, y } }, or null when no hook works.
@@ -511,16 +517,21 @@
               const key = (start ? 'p|' : 's|') + anchor.map(t => t.ch).join('');
               for (const word of this.targetsBy.get(key) || []) {
                 const rest = word.length - a - s.seg.length;
-                if (rest === 0 || (rest >= 2 && rest <= 4)) cands.push({ type, land, s, start, anchor, word });
+                if (rest === 0 || (rest >= 2 && rest <= 4)) cands.push({ type, land, s, start, anchor, word, rest });
               }
             }
           }
         }
       }
       // Across first: stacking down onto a column is always possible, so it would crowd across out.
-      const across = shuffle(cands.filter(c => c.s.dir === 'h'), this.rng);
-      const down = shuffle(cands.filter(c => c.s.dir === 'v'), this.rng);
-      for (const c of [...across.slice(0, 20), ...down.slice(0, 20)]) {
+      // Within each, one piece when that's enough: a second piece is more of a chore.
+      const tries = [];
+      for (const dir of ['h', 'v']) {
+        for (const one of [true, false]) {
+          tries.push(...shuffle(cands.filter(c => c.s.dir === dir && (c.rest === 0) === one), this.rng).slice(0, 10));
+        }
+      }
+      for (const c of tries) {
         const plan = this.buildTarget(grid, ratio, c);
         if (plan) return plan;
       }
