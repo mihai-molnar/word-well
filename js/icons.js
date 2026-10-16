@@ -217,6 +217,7 @@
 
   const tile = {
     bomb: ['......r', '.....w.', '..rrr..', '.rrrrr.', 'rwrrrrr', 'rrrrrrr', '.rrrrr.'],
+    stone: ['wwww.ww', 'wwww.ww', '.......', 'ww.wwww', 'ww.wwww', '.......', 'wwwww.w'],
     drill: ['wwwwwww', '.wrwrw.', '..wrw..', '..rwr..', '...w...', '...r...', '...r...'],
   };
 

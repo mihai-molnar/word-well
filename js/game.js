@@ -111,7 +111,7 @@
   // target word are red: target/targetHint when locked, activeTarget (white square) while falling.
   const tileCache = new Map();
   // Sprite key for a tile or piece cell: bomb and drill tiles have no letter.
-  const tileKey = t => (t.bomb ? '*bomb' : t.drill ? '*drill' : t.ch);
+  const tileKey = t => (t.bomb ? '*bomb' : t.drill ? '*drill' : t.stone ? '*stone' : t.ch);
   function tileSprite(ch, style) {
     const k = style + ':' + ch;
     if (tileCache.has(k)) return tileCache.get(k);
@@ -152,7 +152,7 @@
       case 'targetHint': outline(RED); lip(RED); letter = RED; break;
       case 'activeTarget': fill(WHITE); fillCol = WHITE; letter = RED; break;
     }
-    if (ch === '*bomb' || ch === '*drill') {
+    if (ch === '*bomb' || ch === '*drill' || ch === '*stone') {
       // Letterless tile: the style's outline and lip with a 7x7 mark inside. On filled styles the
       // red parts go black (and white parts too when the fill is white).
       const mark = ICONS.tile[ch.slice(1)];
@@ -291,6 +291,7 @@
       take: () => [0, 7, 12].forEach((s, i) => tone(semi(523, s), 0.07, { vol: 0.05, delay: i * 0.05, type: 'square' })),
       level: () => [0, 4, 7, 12].forEach((s, i) => tone(semi(392, s), 0.12, { vol: 0.05, delay: i * 0.08, type: 'triangle' })),
       target: () => [0, 7, 12, 16, 19, 24].forEach((s, i) => tone(semi(523, s), 0.09, { vol: 0.04, delay: i * 0.05, type: 'triangle' })),
+      rise: () => { noise(0.35, 0.09); tone(70, 0.4, { vol: 0.05, slide: 0.5, type: 'sawtooth' }); },
       blast: () => { noise(0.25, 0.14); tone(160, 0.3, { vol: 0.06, slide: 0.3, type: 'sawtooth' }); },
       missed: () => [0, -5].forEach((s, i) => tone(semi(220, s), 0.12, { vol: 0.04, delay: i * 0.1 })),
       over: () => [0, -3, -7, -12].forEach((s, i) => tone(semi(330, s), 0.2, { vol: 0.05, delay: i * 0.15, slide: 0.9 })),
@@ -317,6 +318,10 @@
   let clearing = null;
   let hint = { cells: new Set(), words: [] };
   let run = U.newRun(), pendingLevelUps = 0;
+  // Rising stone rows: riseLeft pieces still to deal before the next row (null = rows off, 0 = the
+  // falling piece is the last one before it); riseEvery is the interval it started from.
+  let riseLeft = null, riseLayout = null, riseEvery = 0;
+  const START_LEVEL = Math.max(1, +((/[?&]level=(\d+)/.exec(location.search) || [])[1]) || 1); // ?level=N: playtests
   let rules = U.rules(run, minLen); // what counts as a word this run (findWords and the dealer)
   let lvl = null; // { cards, sel, t, taken } while the level-up screen is open
   let forcedCards = null; // wordwell.levelUp(cards): used by the next screen only
@@ -330,7 +335,9 @@
     tracker = new L.TargetTracker();
     score = shownScore = wordsCleared = chain = maxChain = 0;
     targetsHit = targetsSeen = 0;
-    level = 1;
+    level = START_LEVEL;
+    wordsCleared = (START_LEVEL - 1) * WORDS_PER_LEVEL;
+    riseLeft = riseLayout = null;
     run = U.newRun();
     pendingLevelUps = 0;
     lvl = null;
@@ -347,12 +354,44 @@
     piece = null;
     syncRules();
     state = 'play';
+    syncHazards();
     spawn();
+  }
+
+  const hazLevel = () => L.hazardLevel(level, minLen);
+
+  // Start the rise countdown once rows are on (never stops again within a run).
+  function armRise() {
+    const every = L.riseInterval(hazLevel());
+    if (riseLeft !== null || every <= 0) return;
+    riseEvery = riseLeft = every;
+    riseLayout = L.junkLayout(L.junkLetters(hazLevel()), Math.random);
+  }
+
+  function syncHazards() {
+    gen.hookRate = L.hookRateFor(hazLevel());
+    armRise();
+  }
+
+  const nextTurn = () => { if (riseLeft === 0) rise(); else spawn(); };
+
+  // A junk row pushes in from below. Live target tiles are plain grid tiles, so they ride up with it.
+  function rise() {
+    const row = gen.junkRow(grid, riseLayout);
+    if (!L.shiftUp(grid, row)) { gameOver(); return; }
+    for (const r of grid) for (const t of r) if (t) t.dy += CELL;
+    riseEvery = L.riseInterval(hazLevel());
+    riseLeft = riseEvery > 0 ? riseEvery : null;
+    riseLayout = L.junkLayout(L.junkLetters(hazLevel()), Math.random);
+    shake = Math.max(shake, 3);
+    sfx.rise();
+    state = 'settling';
   }
 
   // Letters are dealt the moment a piece spawns, from the board as it is now (NEXT only shows the
   // shape), so a hook the dealer aims at is still there. A target goes live with its first piece.
   function spawn() {
+    if (riseLeft > 0) riseLeft--;
     const dealt = gen.next(grid);
     if (dealt.target && dealt.target.anchor) {
       tracker.announce(grid, dealt.target);
@@ -507,7 +546,7 @@
       }
       chain = 0;
       if (pendingLevelUps > 0) { openLevelUp(); return; }
-      spawn();
+      nextTurn();
       return;
     }
     const hits = new Set(tracker.hit(grid, found));
@@ -554,7 +593,9 @@
   function startClear(found, cells, gained) {
     const before = cells.size;
     cells = L.blastAround(grid, cells, found, U.bombRadius(run));
-    if (cells.size > before) {
+    const boom = cells.size > before;
+    cells = L.breakStones(grid, cells, found);
+    if (boom) {
       sfx.blast();
       shake = Math.max(shake, 4);
       // Banner precedence: MISSED > TARGET > BOOM > CHAIN. A TARGET banner from this pass has t = 0.
@@ -595,7 +636,7 @@
     }
     const newLevel = 1 + Math.floor(wordsCleared / WORDS_PER_LEVEL);
     pendingLevelUps += newLevel - level;
-    level = newLevel;
+    if (newLevel !== level) { level = newLevel; syncHazards(); }
     shake = Math.min(6, 2 + cells.size / 4);
     state = 'settling';
   }
@@ -630,7 +671,7 @@
       lvl = null;
       pendingLevelUps--;
       if (pendingLevelUps > 0) openLevelUp();
-      else if (!afterLevelUp()) spawn();
+      else if (!afterLevelUp()) nextTurn();
     }
   }
 
@@ -687,6 +728,11 @@
     let moving = false;
     for (const row of grid) {
       for (const t of row) {
+        if (t && t.dy > 0) { // pushed up by a rising row
+          t.dy = Math.max(0, t.dy - CELL / 150 * dt);
+          if (t.dy > 0) moving = true;
+          continue;
+        }
         if (!t || t.dy >= 0) continue;
         t.vy += 0.0016 * dt;
         t.dy += t.vy * dt;
@@ -1339,10 +1385,14 @@
     get wordsPerLevel() { return WORDS_PER_LEVEL; },
     get hint() { return hint.words.slice(); },
     get rules() { return rules; },
+    get riseLeft() { return riseLeft; },
     get timing() { return { gravity: gravityMs(), lock: lockDelayMs() }; },
     newGame,
     grant(perkId) { U.takeCard(run, { kind: 'perk', id: perkId }); syncRules(); },
     give(itemId, n = 1) { for (let i = 0; i < n; i++) U.addItem(run, itemId); },
+    // Make the next row rise right after the falling piece locks.
+    rise() { if (!riseLayout) riseLayout = L.junkLayout(L.junkLetters(hazLevel()), Math.random); if (!riseEvery) riseEvery = L.riseInterval(hazLevel()) || 8; riseLeft = 0; },
+    stone(x, y) { grid[y][x] = L.stoneTile(); },
     levelUp(cards) { pendingLevelUps++; if (cards) forcedCards = cards; },
     // Swap the falling piece for a lettered one (scripted checks).
     setPiece(type, letters, x) {
