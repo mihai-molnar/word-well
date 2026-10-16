@@ -391,6 +391,10 @@
   function updateHints() {
     hint = { cells: new Set(), words: [] };
     if (!piece || !showHints) return;
+    if (piece.type === 'drill') {
+      for (const p of L.columnCells(grid, piece.x)) hint.cells.add(key(p.x, p.y));
+      return;
+    }
     const d = ghostDrop();
     const tmp = grid.map(row => row.slice());
     for (const c of piece.cells) {
@@ -417,6 +421,7 @@
   }
 
   function rotate(dir) {
+    if (piece.type === 'drill') return;
     const r = L.tryRotate(grid, piece, dir);
     if (!r) return;
     Object.assign(piece, r);
@@ -447,7 +452,17 @@
     lockPiece();
   }
 
+  // The drill never touches the grid: it clears its whole column, itself included, for no points.
+  function lockDrill() {
+    const x = piece.x;
+    piece = null;
+    hint = { cells: new Set(), words: [] };
+    sfx.lock();
+    startClear([], new Set(L.columnCells(grid, x).map(p => key(p.x, p.y))), 0);
+  }
+
   function lockPiece() {
+    if (piece.type === 'drill') { lockDrill(); return; }
     for (const c of piece.cells) {
       const y = piece.y + c.y;
       if (y < 0) { gameOver(); return; }
@@ -570,7 +585,13 @@
   }
 
   // Hook for a later task: afterLevelUp returns true when it started a clear (which spawns on its own).
-  function afterLevelUp() { return false; }
+  function afterLevelUp() {
+    if (!U.has(run, 'sinkhole')) return false;
+    const cells = L.rowCells(grid, ROWS - 1);
+    if (!cells.length) return false;
+    startClear([], new Set(cells.map(p => key(p.x, p.y))), 0);
+    return true;
+  }
 
   // Push the run's perks into the word rules: findWords here, the dealer and the hints.
   function syncRules() {
@@ -841,7 +862,9 @@
     piece.cells[i].bomb = true;
     return true;
   }
-  function fireDrill() { return false; }
+  function fireDrill() {
+    return swapPiece({ type: 'drill', n: 1, x: 0, y: 0, cells: [{ x: 0, y: 0, ch: '', drill: true }], hookIdx: [] });
+  }
 
   // Track D: REROLL, I-BEAM, BEACON, FREEZE
   function fireReroll() { return false; }
@@ -923,7 +946,21 @@
     if (!piece || (state !== 'play' && state !== 'paused')) return;
     const pulse = Math.floor(time / 180) % 2 === 0;
     const d = ghostDrop();
-    if (d > 0) {
+    if (piece.type === 'drill') {
+      // Dotted red outline on every tile of the column it will clear, and where it lands.
+      ctx.fillStyle = RED;
+      const cells = L.columnCells(grid, piece.x).map(p => p.y);
+      if (d > 0 || !cells.includes(piece.y)) cells.push(piece.y + d);
+      for (const y of cells) {
+        const px = cellPx(piece.x), py = cellPy(y);
+        for (let i = 0; i < TILE; i += 2) {
+          ctx.fillRect(px + i, py, 1, 1);
+          ctx.fillRect(px + i, py + TILE - 1, 1, 1);
+          ctx.fillRect(px, py + i, 1, 1);
+          ctx.fillRect(px + TILE - 1, py + i, 1, 1);
+        }
+      }
+    } else if (d > 0) {
       for (const c of piece.cells) {
         const x = piece.x + c.x, y = piece.y + c.y + d;
         const style = pulse && hint.cells.has(key(x, y)) ? 'ghostHint' : 'ghost';
