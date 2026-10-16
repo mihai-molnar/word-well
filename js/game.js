@@ -287,6 +287,8 @@
         lastGem = now;
         tone(1500 + Math.random() * 500, 0.04, { vol: 0.02, type: 'triangle' });
       },
+      item: () => tone(660, 0.09, { vol: 0.04, slide: 2 }),
+      no: () => tone(110, 0.12, { vol: 0.05, slide: 0.7 }),
       take: () => [0, 7, 12].forEach((s, i) => tone(semi(523, s), 0.07, { vol: 0.05, delay: i * 0.05, type: 'square' })),
       level: () => [0, 4, 7, 12].forEach((s, i) => tone(semi(392, s), 0.12, { vol: 0.05, delay: i * 0.08, type: 'triangle' })),
       target: () => [0, 7, 12, 16, 19, 24].forEach((s, i) => tone(semi(523, s), 0.09, { vol: 0.04, delay: i * 0.05, type: 'triangle' })),
@@ -318,7 +320,7 @@
   let forcedCards = null; // wordwell.levelUp(cards): used by the next screen only
   let recent = [];
   let particles = [], gems = [], popups = [], banner = null;
-  let shake = 0, gemFlash = 0, time = 0, overTime = 0;
+  let shake = 0, gemFlash = 0, itemFlash = 0, time = 0, overTime = 0;
 
   function newGame() {
     grid = L.emptyGrid();
@@ -640,6 +642,7 @@
     if (banner && (banner.t += dt) > 1500) banner = null;
     shake = Math.max(0, shake - dt * 0.02);
     gemFlash = Math.max(0, gemFlash - dt);
+    itemFlash = Math.max(0, itemFlash - dt);
     if (shownScore < score) {
       shownScore = Math.min(score, shownScore + Math.max(1, Math.ceil((score - shownScore) * dt * 0.006)));
     }
@@ -651,7 +654,7 @@
   const BIND = {
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowDown: 'down', KeyS: 'down',
     ArrowUp: 'cw', KeyX: 'cw', KeyW: 'cw', KeyZ: 'ccw', Space: 'drop', KeyP: 'pause', Escape: 'pause',
-    KeyM: 'mute', KeyH: 'hints', Enter: 'start',
+    KeyM: 'mute', KeyH: 'hints', Enter: 'start', KeyC: 'item', KeyV: 'swap',
   };
   const held = new Map(); // action -> { t, r } for auto-repeat
 
@@ -735,7 +738,66 @@
     else if (action === 'cw') rotate(1);
     else if (action === 'ccw') rotate(-1);
     else if (action === 'drop') hardDrop();
+    else if (action === 'item') fireItem();
+    else if (action === 'swap') U.selectNext(run);
   }
+
+  // Items that replace the falling piece (not allowed on a target chunk).
+  const SWAP_ITEMS = new Set(['bomb', 'wild', 'drill', 'ibeam']);
+
+  function fireItem() {
+    const id = U.selectedItem(run);
+    if (!id) return;
+    if ((SWAP_ITEMS.has(id) && piece.cells.some(c => c.tgt)) || !ITEM_FIRE[id]()) {
+      sfx.no();
+      itemFlash = 300;
+      return;
+    }
+    U.useItem(run);
+    sfx.item();
+    showBanner(U.ITEMS[id].name + '!');
+    updateHints();
+  }
+
+  // Put `next` in place of the falling piece: same spot if it fits, else the spawn position.
+  function swapPiece(next) {
+    if (!next.hookIdx) next.hookIdx = [];
+    const cur = { x: piece.x, y: piece.y };
+    const spawnX = Math.floor((COLS - next.n) / 2);
+    const spawnY = -Math.min(...next.cells.map(c => c.y));
+    for (const [x, y] of [[cur.x, cur.y], [spawnX, spawnY]]) {
+      next.x = x;
+      next.y = y;
+      if (!L.collides(grid, next, 0, 0)) {
+        piece = next;
+        dropTimer = lockTimer = lockResets = 0;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Each fire* returns true when the item took effect. Later tasks fill in one group each.
+
+  // Track A: WILD
+  function fireWild() { return false; }
+
+  // Track B: BOMB, DRILL
+  function fireBomb() { return false; }
+  function fireDrill() { return false; }
+
+  // Track D: REROLL, I-BEAM, BEACON, FREEZE
+  function fireReroll() { return false; }
+  function fireIBeam() { return false; }
+  function fireBeacon() { return false; }
+  function fireFreeze() { return false; }
+
+  const ITEM_FIRE = {
+    bomb: fireBomb, wild: fireWild, reroll: fireReroll, drill: fireDrill,
+    freeze: fireFreeze, ibeam: fireIBeam, beacon: fireBeacon,
+  };
+
+  function drawFreezeTimer() {}
 
   // ---------------------------------------------------------------------------------------------
   // Render
@@ -988,19 +1050,47 @@
     drawHeader('NEXT', RIGHT_X, 26);
     if (gen) drawMiniPiece(gen.plan[0] || { type: gen.peekType() }, RIGHT_X + PANEL_W / 2, 58, 'active');
 
-    const stat = (label, value, y, color = WHITE) => {
-      drawText(label, RIGHT_X, y, GREY);
-      drawText(value, RIGHT_X + PANEL_W, y + 10, color, { align: 'right' });
-    };
-    stat('BEST', String(Math.max(best, score)), 116);
-    drawTargetPanel(140);
+    drawTargetPanel(92);
+    drawItemsPanel(146);
+    drawFreezeTimer();
+    drawText('C', RIGHT_X, 256, RED);
+    drawText(' USE  ', RIGHT_X + 6, 256, GREY);
+    drawText('V', RIGHT_X + 42, 256, RED);
+    drawText(' SWAP', RIGHT_X + 48, 256, GREY);
+  }
 
-    drawHeader('HINT', RIGHT_X, 196);
-    if (!showHints) drawText('OFF (H)', RIGHT_X, 212, GREY);
-    else if (hint.words.length) {
-      hint.words.slice(0, 3).forEach((w, i) => drawText(w.toUpperCase().slice(0, 12), RIGHT_X, 212 + i * 10, RED));
-    } else drawText('-', RIGHT_X, 212, GREY);
-    drawText('MIN ' + minLen + (sfx.muted ? '  MUTE' : ''), RIGHT_X, 252, GREY);
+  const hudIconCache = new Map();
+  function hudIcon(id, on) {
+    const k = id + (on ? '+' : '-');
+    if (hudIconCache.has(k)) return hudIconCache.get(k);
+    const c = document.createElement('canvas');
+    c.width = c.height = 9;
+    const g = c.getContext('2d');
+    ICONS.hud[id].forEach((row, y) => [...row].forEach((p, x) => {
+      if (p === '.') return;
+      g.fillStyle = p === 'r' ? (on ? RED : DIMRED) : (on ? WHITE : GREY);
+      g.fillRect(x, y, 1, 1);
+    }));
+    hudIconCache.set(k, c);
+    return c;
+  }
+
+  function drawItemsPanel(y) {
+    drawHeader('ITEMS', RIGHT_X, y);
+    if (!run.items.length) { drawText('-', RIGHT_X, y + 16, GREY); return; }
+    run.items.forEach((s, i) => {
+      const ry = y + 16 + i * 13, on = i === run.sel;
+      if (on && !(itemFlash > 0 && Math.floor(itemFlash / 60) % 2)) {
+        ctx.fillStyle = RED;
+        ctx.fillRect(RIGHT_X - 2, ry - 3, PANEL_W + 3, 1);
+        ctx.fillRect(RIGHT_X - 2, ry + 9, PANEL_W + 3, 1);
+        ctx.fillRect(RIGHT_X - 2, ry - 3, 1, 13);
+        ctx.fillRect(RIGHT_X + PANEL_W, ry - 3, 1, 13);
+      }
+      ctx.drawImage(hudIcon(s.id, on), RIGHT_X + 1, ry - 1);
+      drawText(U.ITEMS[s.id].name, RIGHT_X + 13, ry, on ? WHITE : GREY);
+      drawText('X' + s.n, RIGHT_X + PANEL_W - 2, ry, on ? RED : DIMRED, { align: 'right' });
+    });
   }
 
   // The live target and how many pieces are left to spell it.
@@ -1026,7 +1116,7 @@
     drawHeader('CONTROLS', LEFT_X, 26);
     [
       ['← →', 'MOVE'], ['↑ X', 'ROTATE'], ['Z', 'ROT LEFT'], ['↓', 'SOFT'], ['SPC', 'DROP'],
-      ['P', 'PAUSE'], ['H', 'HINTS'], ['M', 'MUTE'],
+      ['C', 'ITEM'], ['V', 'SWAP'], ['P', 'PAUSE'], ['H', 'HINTS'], ['M', 'MUTE'],
     ].forEach(([k, v], i) => {
       drawText(k, LEFT_X, 42 + i * 11, RED);
       drawText(v, LEFT_X + PANEL_W, 42 + i * 11, WHITE, { align: 'right' });
@@ -1080,7 +1170,8 @@
     row('LONGEST', longest ? longest.toUpperCase().slice(0, 9) : '-', WELL_Y + 134);
     row('CHAIN', 'X' + Math.max(1, maxChain), WELL_Y + 146);
     row('TARGETS', targetsHit + '/' + targetsSeen, WELL_Y + 158);
-    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER RETRY', cx, WELL_Y + 180, WHITE, { align: 'center' });
+    row('BEST', String(best), WELL_Y + 170);
+    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER RETRY', cx, WELL_Y + 188, WHITE, { align: 'center' });
   }
 
   // ---------------------------------------------------------------------------------------------
