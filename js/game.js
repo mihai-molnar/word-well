@@ -4,6 +4,7 @@
 
   const L = window.WordWellLogic;
   const FONT = window.WordWellFont;
+  const ICONS = window.WordWellIcons;
   const dict = L.buildDictionary(window.WORDLIST || '');
   const TARGETS = (window.TARGETS || '').split(' ').filter(Boolean);
 
@@ -109,6 +110,8 @@
   // would complete), flash/flashRed (being cleared), dead (game over wipe). Letters reserved for the
   // target word are red: target/targetHint when locked, activeTarget (white square) while falling.
   const tileCache = new Map();
+  // Sprite key for a tile or piece cell: bomb and drill tiles have no letter.
+  const tileKey = t => (t.bomb ? '*bomb' : t.drill ? '*drill' : t.ch);
   function tileSprite(ch, style) {
     const k = style + ':' + ch;
     if (tileCache.has(k)) return tileCache.get(k);
@@ -135,20 +138,34 @@
       for (let i = 2; i < S - 1; i += 2) g.fillRect(i, S - 1, 1, 1);
     };
     let letter = WHITE;
+    let fillCol = null;
     switch (style) {
       case 'locked': outline(WHITE); lip(WHITE); break;
       case 'hint': outline(RED); lip(RED); break;
-      case 'active': fill(RED); break;
+      case 'active': fill(RED); fillCol = RED; break;
       case 'ghost': outline(RED, true); letter = DIMRED; break;
       case 'ghostHint': outline(RED); break;
-      case 'flash': fill(WHITE); letter = BLACK; break;
-      case 'flashRed': fill(RED); letter = BLACK; break;
+      case 'flash': fill(WHITE); fillCol = WHITE; letter = BLACK; break;
+      case 'flashRed': fill(RED); fillCol = RED; letter = BLACK; break;
       case 'dead': outline(RED); lip(RED); letter = RED; break;
       case 'target': outline(WHITE); lip(WHITE); letter = RED; break;
       case 'targetHint': outline(RED); lip(RED); letter = RED; break;
-      case 'activeTarget': fill(WHITE); letter = RED; break;
+      case 'activeTarget': fill(WHITE); fillCol = WHITE; letter = RED; break;
     }
-    if (ch === 'qu') {
+    if (ch === '*bomb' || ch === '*drill') {
+      // Letterless tile: the style's outline and lip with a 7x7 mark inside. On filled styles the
+      // red parts go black (and white parts too when the fill is white).
+      const mark = ICONS.tile[ch.slice(1)];
+      const dim = style === 'ghost';
+      const pal = style === 'dead' ? { w: RED, r: RED }
+        : fillCol ? { w: fillCol === WHITE ? BLACK : WHITE, r: BLACK }
+        : dim ? { w: GREY, r: DIMRED } : { w: WHITE, r: RED };
+      mark.forEach((row, y) => [...row].forEach((p, x) => {
+        if (p === '.') return;
+        g.fillStyle = pal[p];
+        g.fillRect(2 + x, 2 + y, 1, 1);
+      }));
+    } else if (ch === 'qu') {
       paintBitmap(g, FONT.glyphs.Q, 1, 2, letter);
       paintBitmap(g, FONT.smallU, 7, 4, letter);
     } else if (ch) {
@@ -734,7 +751,7 @@
         else if (state === 'over' && y >= ROWS - wiped) style = 'dead';
         else if (pulse && hint.cells.has(k)) style = t.tgt ? 'targetHint' : 'hint';
         else if (t.tgt) style = 'target';
-        ctx.drawImage(tileSprite(t.ch, style), cellPx(x), cellPy(y) + Math.round(t.dy || 0));
+        ctx.drawImage(tileSprite(tileKey(t), style), cellPx(x), cellPy(y) + Math.round(t.dy || 0));
       }
     }
   }
@@ -747,10 +764,10 @@
       for (const c of piece.cells) {
         const x = piece.x + c.x, y = piece.y + c.y + d;
         const style = pulse && hint.cells.has(key(x, y)) ? 'ghostHint' : 'ghost';
-        ctx.drawImage(tileSprite(c.ch, style), cellPx(x), cellPy(y));
+        ctx.drawImage(tileSprite(tileKey(c), style), cellPx(x), cellPy(y));
       }
     }
-    for (const c of piece.cells) ctx.drawImage(tileSprite(c.ch, c.tgt ? 'activeTarget' : 'active'), cellPx(piece.x + c.x), cellPy(piece.y + c.y));
+    for (const c of piece.cells) ctx.drawImage(tileSprite(tileKey(c), c.tgt ? 'activeTarget' : 'active'), cellPx(piece.x + c.x), cellPy(piece.y + c.y));
   }
 
   function drawParticles() {
@@ -805,7 +822,7 @@
     const h = (Math.max(...ys) - minY + 1) * CELL - 1;
     const ox = cx - Math.floor(w / 2), oy = cy - Math.floor(h / 2);
     const tgtStyle = style === 'active' ? 'activeTarget' : 'target';
-    for (const c of cells) ctx.drawImage(tileSprite(c.ch, c.tgt ? tgtStyle : style), ox + (c.x - minX) * CELL, oy + (c.y - minY) * CELL);
+    for (const c of cells) ctx.drawImage(tileSprite(tileKey(c), c.tgt ? tgtStyle : style), ox + (c.x - minX) * CELL, oy + (c.y - minY) * CELL);
   }
 
   function drawHUD() {
