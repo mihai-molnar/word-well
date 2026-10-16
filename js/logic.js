@@ -159,34 +159,79 @@
   // Searches every row (left to right) and column (top to bottom). Within one unbroken run of
   // tiles the longest words win and may not overlap; an across and a down word may share a tile.
   // A tile reserved for a target word (tile.tgt) only clears as part of a word containing that target.
-  function findWords(grid, dict, minLen = 3) {
+  // rules: a number (minLen) or { minLen, shortLen, mirror }. Tiles without a letter break a run;
+  // a wild tile ({ wild: true }) stands for any letter, at most two per word.
+  function findWords(grid, dict, rules = 3) {
+    const r = typeof rules === 'number' ? { minLen: rules } : rules;
     const rows = grid.length;
     const cols = grid[0].length;
     const found = [];
-    for (let y = 0; y < rows; y++) scanLine(cols, i => grid[y][i], i => ({ x: i, y }), 'h', dict, minLen, found);
-    for (let x = 0; x < cols; x++) scanLine(rows, i => grid[i][x], i => ({ x, y: i }), 'v', dict, minLen, found);
+    for (let y = 0; y < rows; y++) scanLine(cols, i => grid[y][i], i => ({ x: i, y }), 'h', dict, r, found);
+    for (let x = 0; x < cols; x++) scanLine(rows, i => grid[i][x], i => ({ x, y: i }), 'v', dict, r, found);
     return found;
   }
 
-  function scanLine(len, get, pos, dir, dict, minLen, found) {
+  function scanLine(len, get, pos, dir, dict, r, found) {
+    const live = i => { const t = get(i); return t && (t.ch || t.wild); };
     let s = 0;
     while (s < len) {
-      if (!get(s)) { s++; continue; }
+      if (!live(s)) { s++; continue; }
       let e = s;
-      while (e < len && get(e)) e++;
-      wordsInRun(s, e, get, pos, dir, dict, minLen, found);
+      while (e < len && live(e)) e++;
+      wordsInRun(s, e, get, pos, dir, dict, r, found);
       s = e;
     }
   }
 
-  function wordsInRun(s, e, get, pos, dir, dict, minLen, found) {
+  const WILD_CHS = 'abcdefghijklmnoprstuvwxyz'.split('').concat('qu');
+
+  // The best dictionary word the parts can spell once each '?' is replaced (null if none).
+  function fillWilds(parts, dict, minLen) {
+    const at = [];
+    parts.forEach((p, i) => { if (p === '?') at.push(i); });
+    if (at.length > 2) return null;
+    const trial = parts.slice();
+    let best = null;
+    let bestScore = -1;
+    const test = () => {
+      const str = trial.join('');
+      if (str.length < minLen || str.length > dict.maxLen || !dict.words.has(str)) return;
+      const sc = scoreWord(str);
+      if (sc > bestScore || (sc === bestScore && str < best.str)) {
+        best = { str, wildChs: at.map(i => trial[i]) };
+        bestScore = sc;
+      }
+    };
+    for (const c of WILD_CHS) {
+      trial[at[0]] = c;
+      if (at.length === 1) { test(); continue; }
+      for (const d of WILD_CHS) { trial[at[1]] = d; test(); }
+    }
+    return best;
+  }
+
+  function wordsInRun(s, e, get, pos, dir, dict, r, found) {
+    const minLen = r.minLen;
     const cands = [];
     for (let a = s; a < e; a++) {
       let str = '';
+      let size = 0;
+      let wilds = 0;
+      const parts = [];
       for (let b = a; b < e; b++) {
-        str += get(b).ch;
-        if (str.length > dict.maxLen) break;
-        if (str.length >= minLen && dict.words.has(str) && respectsTargets(a, b, str, get)) cands.push({ a, b, str });
+        const t = get(b);
+        const p = t.wild ? '?' : t.ch;
+        parts.push(p);
+        size += p.length;
+        if (t.wild) wilds++;
+        if (size > dict.maxLen || wilds > 2) break;
+        if (!wilds) {
+          str += p;
+          if (str.length >= minLen && dict.words.has(str) && respectsTargets(a, b, str, get)) cands.push({ a, b, str });
+        } else {
+          const m = fillWilds(parts, dict, minLen);
+          if (m && respectsTargets(a, b, m.str, get)) cands.push({ a, b, str: m.str, wildChs: m.wildChs });
+        }
       }
     }
     if (!cands.length) return;
@@ -197,7 +242,9 @@
       taken.push(c);
       const cells = [];
       for (let i = c.a; i <= c.b; i++) cells.push(pos(i));
-      found.push({ word: c.str, dir, cells });
+      const w = { word: c.str, dir, cells };
+      if (c.wildChs) w.wildChs = c.wildChs;
+      found.push(w);
     }
   }
 
@@ -301,7 +348,7 @@
     const out = [];
     while (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length) {
       const t = grid[y][x];
-      if (!t || t.tgt) break;
+      if (!t || t.tgt || t.wild || !t.ch) break;
       out.push({ x, y, ch: t.ch });
       x += dx;
       y += dy;
