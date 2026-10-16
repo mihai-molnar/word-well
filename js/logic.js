@@ -755,9 +755,9 @@
   function pickFiller(piece, rng) {
     const hook = piece.hookIdx || [];
     const free = [];
-    piece.cells.forEach((c, i) => { if (!c.tgt && !hook.includes(i)) free.push(i); });
+    piece.cells.forEach((c, i) => { if (!c.tgt && !c.bomb && !c.wild && !hook.includes(i)) free.push(i); });
     if (free.length) return free[Math.floor(rng() * free.length)];
-    return piece.cells.findIndex(c => !c.tgt);
+    return piece.cells.findIndex(c => !c.tgt && !c.bomb && !c.wild);
   }
 
   // Follows the live target through a game: announce() when its first piece is dealt, placed() on
