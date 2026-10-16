@@ -135,7 +135,7 @@ Every `WORDS_PER_LEVEL` (8) words cleared is a level-up, which opens a pick-one-
 
 Lock → `resolve()` (a DRILL piece locks through `lockDrill` and the same clear path). If words are found: `clearing` (flash for `CLEAR_TIME`) → `finishClear()` (score, particles, gems fly to the score, `applyGravity`, with each moved tile animating via `dy/vy`) → `settling` until all tiles land → `resolve()` again, with `chain++` each pass. When no words remain, `tracker.endTurn()` runs first: if the target expired, it shows a MISSED banner and calls `resolve()` once more. After that, `chain=0`, and if `pendingLevelUps > 0` the level-up screen opens; otherwise `spawn()` runs. `spawn()` deals with `gen.next(grid)`, and if the deal starts a target it calls `tracker.announce` and shows the TARGET banner. Game over happens when a spawn collides or a cell locks above row 0.
 
-Other mechanics: lock delay of 500ms with up to 15 move resets; DAS/ARR auto-repeat in `updateHeld`; levels every 8 words (3 with `?fast`), with gravity `900·0.86^(lvl−1)` ms (min 70), changed by PACE perks.
+Other mechanics: lock delay of 500ms with up to 15 move resets; DAS/ARR auto-repeat in `updateHeld`; levels every 8 words (3 with `?fast`), with gravity `900·0.80^(lvl−1)` ms (min 30, reached at level 17), changed by PACE perks.
 
 The **hint** system (`updateHints`) runs `findWords` on a copy of the grid with the piece at its ghost position after every move. The cells involved pulse red in the well (toggle: H); there is no word list.
 

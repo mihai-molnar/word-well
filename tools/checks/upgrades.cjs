@@ -61,7 +61,7 @@ assert.deepStrictEqual(U.rules(R({ purist: 1, mirror: 1, scrabbler: 1 }), 3), { 
 assert.strictEqual(U.rules(R({ shortfuse: 1 }), 4).shortLen, 3);
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-6, a + ' vs ' + b);
 close(U.gravityMs(R({}), 1), 900); close(U.gravityMs(R({ feather: 1 }), 1), 1200); close(U.gravityMs(R({ feather: 2 }), 1), 1600);
-close(U.gravityMs(R({ daredevil: 1 }), 1), 900 * 0.86 * 0.86); close(U.gravityMs(R({}), 40), 70);
+close(U.gravityMs(R({ daredevil: 1 }), 1), 900 * 0.80 * 0.80); close(U.gravityMs(R({}), 40), 30);
 assert.strictEqual(U.lockDelayMs(R({})), 500); assert.strictEqual(U.lockDelayMs(R({ sticky: 1 })), 1000);
 assert.strictEqual(U.bombRadius(R({})), 1); assert.strictEqual(U.bombRadius(R({ bigbang: 1 })), 2);
 assert.strictEqual(U.chainFactor(R({}), 3), 3); assert.strictEqual(U.chainFactor(R({ aftershock: 1 }), 3), 5);
