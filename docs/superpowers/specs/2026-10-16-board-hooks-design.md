@@ -1,6 +1,6 @@
 # Board hooks and anchored targets: design
 
-Status: approved in brainstorming on 2026-10-16. Branch: `board-hooks`.
+Status: approved in brainstorming on 2026-10-16. Branch: `board-hooks`. Revised the same day after a scratch prototype: NEXT shows the shape only, hooks prefer 5+ letters, the hook rate is 0.9, and targets prefer across (see "Prototype results").
 
 ## Problem
 
@@ -26,7 +26,7 @@ Today's loop is mostly 3-letter words with a target word now and then. It isn't 
 | Regular long words | Dealt silently, and nothing marks them. The H hint shows them when the ghost sits in the right spot. |
 | Targets | Built on letters already on the board, dealt over 1–2 pieces, ×3 score, and they clear their whole row or column. |
 | Old free-floating targets | Removed, with no fallback. |
-| Preview | One NEXT slot instead of two. A piece gets its letters when it enters NEXT. |
+| Preview | One NEXT slot instead of two, showing **only the shape**. A piece gets its letters the moment it spawns. |
 | Shapes | Classic tetrominoes and the 7-bag stay as they are. |
 | Out of scope | The upgrades system, new shapes, rule changes for short words. |
 
@@ -49,7 +49,7 @@ For words of 4–7 letters (the hook and target range), build `byPrefix: Map<"le
 
 ### Choosing a hook
 
-Score each candidate by weight: longer words weigh more, more board letters used weigh more, and new holes cut the weight sharply. Sample by weight and don't always take the best, so the dealer doesn't feel deterministic. The exact formula is tuned in the sim.
+If any hook of 5+ letters exists, choose only among those; otherwise use the 4-letter hooks. Within that set, sample by weight `(len − 3)² × (1 + board letters used) / (1 + 3 × new holes)`. Longer words and more board letters weigh more, buried cells weigh much less, and sampling keeps the dealer from feeling deterministic.
 
 ### Lettering the hook piece
 
@@ -60,20 +60,22 @@ Score each candidate by weight: longer words weigh more, more board letters used
 
 ### Rate
 
-For each plain (non-target) piece, the dealer tries a hook with probability `HOOK_RATE`, starting at 0.65 and tuned in the sim.
+For each plain (non-target) piece, the dealer tries a hook with probability `HOOK_RATE = 0.9`.
 
-## 2. Dealing timing (one NEXT slot)
+## 2. Dealing timing (one NEXT slot, shape only)
 
-- The queue holds a single piece. In `spawn()`, the current piece comes from the queue, and the new NEXT piece is dealt right away from the **live board**.
-- So the board a deal is planned against is out of date by exactly one piece: the one currently falling, which the player sees together with NEXT and can keep off the spot.
+- The generator deals in two steps:
+  - `peekType()` returns the shape of the next piece. The NEXT box draws that shape as blank red cells.
+  - `next(grid)` letters that piece **the moment it spawns**, from the live board. It takes the grid (it used to take the vowel ratio) and works out the ratio itself.
+- A two-piece target's second piece is planned together with the first. NEXT shows its shape, with its reserved cells in the target style.
+- **Why shape only:** the prototype dealt letters one piece early, to show them in NEXT. By the time those pieces arrived, about 45% of their hooks were gone: the falling piece usually clears a word, and gravity moves the columns. Dealing at spawn keeps every hook spellable.
 - The right panel drops the second preview. The space it frees stays empty for now.
-- `PieceGenerator.next(grid)` takes the grid, where it used to take the vowel ratio, and works the ratio out itself.
 
 ## 3. Anchored targets
 
 ### Cadence
 
-`FIRST_TARGET` and the 7-piece spacing stay as they are. When a target is due, the dealer looks for an anchor while lettering the NEXT piece. If none fits, it tries again on the following piece, and keeps trying until one fits.
+`FIRST_TARGET` and the spacing stay as they are (5 plain pieces after a target's last chunk). When a target is due, the dealer looks for an anchor as it letters the spawning piece. If none fits, it tries again on the following piece, and keeps trying until one fits.
 
 ### Picking the word and the anchor
 
@@ -82,8 +84,8 @@ For each plain (non-target) piece, the dealer tries a hook with probability `HOO
   - **Across:** the anchor is the start of the word and the new letters go to its right, or the anchor is the end and they go to its left.
   - **Down:** new letters can only land on top of a column, so the anchor is the end of the word (the top of the column, read downward).
 - The new letters come in **1 or 2 pieces**, each holding a straight segment of 2–4 letters. One piece is used when that's enough.
-  - The dealer picks each chunk piece's shape (target pieces don't use the 7-bag, as today).
-  - The chunk that touches the anchor comes first. The far chunk is the next piece after that.
+  - The first chunk touches the anchor and uses the shape NEXT already showed (from the 7-bag). The second chunk, when needed, picks its own shape.
+  - **Across first:** a down target can be stacked onto almost any column, so it would crowd across targets out (84% of prototype targets were down). The planner tries across candidates first, then down (66% across after the change).
 - **Reachability check, before announcing:**
   - Chunk 1 must have a landing spot (rotation 0 or 1) where its segment lines up next to the anchor.
   - With chunk 1 placed there on a copy of the board, chunk 2 must have a landing spot next to chunk 1.
@@ -92,9 +94,10 @@ For each plain (non-target) piece, the dealer tries a hook with probability `HOO
 
 ### Announcing and reservation
 
-- The target goes live **when chunk 1 is dealt into NEXT**. At that point the banner shows `TARGET <WORD>` and `TargetTracker.announce(grid, target)`:
+- The target goes live **when chunk 1 spawns**. At that point the banner shows `TARGET <WORD>` and `TargetTracker.announce(grid, target)`:
   - sets `tgt = word` on the anchor tiles, which then render red through the existing `target` style;
-  - makes the word live, so reserved tiles can't be taken by other words while the current piece falls.
+  - makes the word live, so other words can't take reserved tiles.
+- `placed(info)` no longer sets the word. If a chunk lands after its target has already ended, its tiles are freed in `endTurn`.
 - Chunk cells carry `tgt` as they do today.
 - `placed(info)` keeps counting chunks. The 3-piece window (`TARGET_WINDOW`) starts once the last chunk lands, as today.
 
@@ -122,12 +125,13 @@ For each plain (non-target) piece, the dealer tries a hook with probability `HOO
 - Export the new pieces through `api`.
 
 **`js/game.js`:**
-- The queue becomes one piece. `spawn()` calls `gen.next(grid)` and, when a target starts, `tracker.announce`.
+- The queue goes away. `spawn()` calls `gen.next(grid)` and, when a target starts, `tracker.announce`. NEXT draws `gen.plan[0]` (a target's second chunk) or `gen.peekType()`, as a shape only.
+- The title screen's target blurb mentions the blast.
 - `resolve()` adds `lineCells` for every hit to the cells being cleared.
 - The panel drops the second NEXT slot. The TARGET panel reads the live word from the tracker as soon as it's announced.
 
 **`tools/simulate.cjs`:**
-- The dealer gets the grid, and the bot plays with one preview, matching the game.
+- Each piece is dealt from the live board at spawn, as in the game. For a two-piece target's first chunk, the bot also sees the planned second chunk (a player knows the word).
 - Rows: generator; generator + hooks; generator + hooks + anchored targets.
 - Columns: words/piece, games lost, word length mix, targets hit/seen, and tiles cleared by blasts.
 
@@ -139,6 +143,19 @@ For each plain (non-target) piece, the dealer tries a hook with probability `HOO
 - The existing assertions keep passing, or are updated where the target rules changed.
 
 **`CLAUDE.md`:** update the target and generator sections, the queue description and the sim baseline table.
+
+## Prototype results (scratch copy, bot at min 3, 8 games × 300 pieces)
+
+| Dealer | 3-letter | 4 | 5 | 6+ | lost |
+|---|---|---|---|---|---|
+| Old generator + old targets (main) | 67% | 19% | 5% | 9% | 0/8 |
+| Generator + hooks | 34% | 38% | 25% | 3% | 0/8 |
+| Generator + hooks + anchored targets | 31% | 31% | 26% | 11% | 0/8 |
+
+- Hooks alone reach 28% 5+ letter words, which clears the go/no-go bar.
+- Targets were hit 340 of 351 times, and dealing takes 0.1–0.3 ms per piece.
+- At min 4, hooks make the game survivable: 0/8 games lost, against 8/8 on main.
+- The bot keeps the board nearly empty, so blasts average under 1 extra tile. Judge the blast by playtest.
 
 ## 5. Verification and rollout
 
