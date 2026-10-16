@@ -455,6 +455,7 @@
   // The drill never touches the grid: it clears its whole column, itself included, for no points.
   function lockDrill() {
     const x = piece.x;
+    tracker.placed(null); // a drill is a placed piece: it counts toward a live target's window
     piece = null;
     hint = { cells: new Set(), words: [] };
     sfx.lock();
