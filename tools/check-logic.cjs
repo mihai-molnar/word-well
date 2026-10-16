@@ -271,6 +271,11 @@ T4.placed({ word: 'strong', last: true }); T4.endTurn(gf);
 for (let i = 0; i < 3; i++) { T4.placed(null); T4.endTurn(gf); }
 assert.ok(gf.every(r => r.every(t => !t || !t.tgt)), 'moved anchor tiles are freed too');
 
+// --- a target hit clears its whole line
+const gl = well([19, 0, 'ab.cd'], [18, 1, 'x']);
+assert.deepStrictEqual(L.lineCells(gl, { dir: 'h', cells: [{ x: 3, y: 19 }] }), [{ x: 0, y: 19 }, { x: 1, y: 19 }, { x: 3, y: 19 }, { x: 4, y: 19 }]);
+assert.deepStrictEqual(L.lineCells(gl, { dir: 'v', cells: [{ x: 1, y: 18 }] }), [{ x: 1, y: 18 }, { x: 1, y: 19 }]);
+
 // --- generator stats
 const gen = new L.PieceGenerator(dict, { rng: L.makeRng(1) });
 let vow = 0, n = 0, bad = 0; const freq = {}; const samples = {};

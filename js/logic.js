@@ -361,6 +361,18 @@
     return g;
   }
 
+  // Every occupied cell in the row (across) or column (down) of a found word: what a target hit clears.
+  function lineCells(grid, found) {
+    const { x, y } = found.cells[0];
+    const out = [];
+    if (found.dir === 'h') {
+      for (let i = 0; i < grid[0].length; i++) if (grid[y][i]) out.push({ x: i, y });
+    } else {
+      for (let i = 0; i < grid.length; i++) if (grid[i][x]) out.push({ x, y: i });
+    }
+    return out;
+  }
+
   function pickIndex(weights, rng) {
     let total = 0;
     for (const w of weights) total += w;
@@ -659,7 +671,7 @@
   const api = {
     COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, HOOK_MIN, HOOK_MAX, HOOK_RATE,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
-    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt,
+    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells,
     PieceGenerator, TargetTracker,
   };
   root.WordWellLogic = api;

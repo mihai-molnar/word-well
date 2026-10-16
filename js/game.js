@@ -452,6 +452,8 @@
       recent.unshift({ word: w.word, pts });
       if (w.word.length > longest.length) longest = w.word;
     });
+    // A target hit blasts its whole row (across) or column (down).
+    for (const w of hits) for (const p of L.lineCells(grid, w)) cells.add(key(p.x, p.y));
     recent.length = Math.min(recent.length, 22);
     clearing = { found, cells, gained, t: 0 };
     state = 'clearing';
@@ -892,7 +894,7 @@
       ['SPELL WORDS', WHITE], ['ACROSS → OR', WHITE], ['DOWN ↓.', WHITE], ['', WHITE],
       ['WORDS BREAK,', WHITE], ['TILES ABOVE', WHITE], ['FALL IN.', WHITE], ['', WHITE],
       ['CHAINS AND', RED], ['LONG WORDS', RED], ['SCORE MORE.', RED], ['', WHITE],
-      ['RED LETTERS', RED], ['MAKE THE', WHITE], ['TARGET WORD:', WHITE], ['JOIN THEM', WHITE], ['FOR X3.', WHITE],
+      ['RED LETTERS', RED], ['BEGIN A', WHITE], ['TARGET WORD.', WHITE], ['SPELL IT FOR', WHITE], ['X3 + BLAST.', WHITE],
     ].forEach(([t, c], i) => drawText(t, RIGHT_X, 42 + i * 10, c));
     drawText('BEST ' + best, RIGHT_X, 252, GREY);
   }

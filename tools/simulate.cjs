@@ -81,13 +81,19 @@ function play(dealer, minLen, maxPieces, rng, stats) {
         if (tracker.endTurn(grid)) continue; // expired: its letters are free now, look again
         break;
       }
-      if (tracker.hit(grid, found).length) stats.hits++;
+      const hits = tracker.hit(grid, found);
       const cells = new Set();
       for (const w of found) {
         stats.lens[Math.min(6, w.word.length)]++;
         stats.words++;
         if (current.hook && w.word.includes(current.hook.word)) spelled = true;
         for (const c of w.cells) cells.add(c.x + ',' + c.y);
+      }
+      if (hits.length) {
+        stats.hits++;
+        const before = cells.size;
+        for (const w of hits) for (const c of L.lineCells(grid, w)) cells.add(c.x + ',' + c.y);
+        stats.blasted += cells.size - before;
       }
       for (const k of cells) {
         const [x, y] = k.split(',').map(Number);
@@ -120,7 +126,7 @@ const GAMES = 8;
 for (const minLen of [3, 4]) {
   console.log(`--- min word length ${minLen}, greedy bot, ${GAMES} games x up to 300 pieces`);
   for (const [name, mk] of Object.entries(dealers)) {
-    const stats = { words: 0, lens: [0, 0, 0, 0, 0, 0, 0], targets: 0, hits: 0, hooks: 0, hooksSpelled: 0, deals: 0, ns: 0 };
+    const stats = { words: 0, lens: [0, 0, 0, 0, 0, 0, 0], targets: 0, hits: 0, blasted: 0, hooks: 0, hooksSpelled: 0, deals: 0, ns: 0 };
     let pieces = 0, overs = 0;
     for (let s = 1; s <= GAMES; s++) {
       const rng = L.makeRng(s * 101);
@@ -132,6 +138,6 @@ for (const minLen of [3, 4]) {
       ' lost', overs + '/' + GAMES, ' | len 3', pct(3), ' 4', pct(4), ' 5', pct(5), ' 6+', pct(6),
       ' |', (stats.ns / stats.deals / 1e6).toFixed(2), 'ms/deal',
       stats.hooks ? ` | hooks spelled ${stats.hooksSpelled}/${stats.hooks}` : '',
-      stats.targets ? ` | targets hit ${stats.hits}/${stats.targets}` : '');
+      stats.targets ? ` | targets hit ${stats.hits}/${stats.targets}, ${(stats.blasted / Math.max(1, stats.hits)).toFixed(1)} tiles blasted/hit` : '');
   }
 }
