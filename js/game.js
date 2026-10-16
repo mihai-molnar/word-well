@@ -368,13 +368,15 @@
 
   // Track A: JOKER's wild tile. Runs on every dealt piece, after hookIdx is set.
   function dealExtras(piece, dealt) {
-    if (U.jokerDue(run)) makeWild(piece);
+    // JOKER never covers a hook or target letter; if no true filler cell exists, it comes next piece.
+    if (U.jokerDue(run) && !makeWild(piece, true)) run.joker = U.JOKER_EVERY - 1;
   }
 
   // One filler cell becomes a wild '?' tile; false when the piece has no usable cell.
-  function makeWild(p) {
+  function makeWild(p, strict) {
     const i = L.pickFiller(p, Math.random);
     if (i < 0) return false;
+    if (strict && ((p.hookIdx || []).includes(i) || p.cells[i].tgt)) return false;
     p.cells[i].ch = '?';
     p.cells[i].wild = true;
     return true;
