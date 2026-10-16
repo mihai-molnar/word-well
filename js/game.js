@@ -5,6 +5,7 @@
   const L = window.WordWellLogic;
   const FONT = window.WordWellFont;
   const ICONS = window.WordWellIcons;
+  const U = window.WordWellUpgrades;
   const dict = L.buildDictionary(window.WORDLIST || '');
   const TARGETS = (window.TARGETS || '').split(' ').filter(Boolean);
 
@@ -24,7 +25,7 @@
 
   // ---- timing (ms) ----
   const LOCK_DELAY = 500, CLEAR_TIME = 480, DAS = 150, ARR = 45, SOFT_ARR = 35;
-  const WORDS_PER_LEVEL = 8;
+  const WORDS_PER_LEVEL = /[?&]fast\b/.test(location.search) ? 3 : 8; // ?fast: quick level-ups for playtests
   const gravityInterval = lvl => Math.max(70, 900 * Math.pow(0.86, lvl - 1));
 
   const canvas = document.getElementById('screen');
@@ -286,6 +287,7 @@
         lastGem = now;
         tone(1500 + Math.random() * 500, 0.04, { vol: 0.02, type: 'triangle' });
       },
+      take: () => [0, 7, 12].forEach((s, i) => tone(semi(523, s), 0.07, { vol: 0.05, delay: i * 0.05, type: 'square' })),
       level: () => [0, 4, 7, 12].forEach((s, i) => tone(semi(392, s), 0.12, { vol: 0.05, delay: i * 0.08, type: 'triangle' })),
       target: () => [0, 7, 12, 16, 19, 24].forEach((s, i) => tone(semi(523, s), 0.09, { vol: 0.04, delay: i * 0.05, type: 'triangle' })),
       missed: () => [0, -5].forEach((s, i) => tone(semi(220, s), 0.12, { vol: 0.04, delay: i * 0.1 })),
@@ -296,7 +298,7 @@
   // ---------------------------------------------------------------------------------------------
   // Game state
   // ---------------------------------------------------------------------------------------------
-  let state = 'title'; // title | play | clearing | settling | paused | over
+  let state = 'title'; // title | play | clearing | settling | levelup | paused | over
   let minLen = store.get('minLen', 3);
   let showHints = store.get('hints', true);
   let best = store.get('best', 0);
@@ -311,6 +313,9 @@
   let dropTimer = 0, lockTimer = 0, lockResets = 0;
   let clearing = null;
   let hint = { cells: new Set(), words: [] };
+  let run = U.newRun(), pendingLevelUps = 0;
+  let lvl = null; // { cards, sel, t, taken } while the level-up screen is open
+  let forcedCards = null; // wordwell.levelUp(cards): used by the next screen only
   let recent = [];
   let particles = [], gems = [], popups = [], banner = null;
   let shake = 0, gemFlash = 0, time = 0, overTime = 0;
@@ -322,6 +327,10 @@
     score = shownScore = wordsCleared = chain = maxChain = 0;
     targetsHit = targetsSeen = 0;
     level = 1;
+    run = U.newRun();
+    pendingLevelUps = 0;
+    lvl = null;
+    forcedCards = null;
     longest = '';
     newBest = false;
     recent = [];
@@ -449,6 +458,7 @@
         return;
       }
       chain = 0;
+      if (pendingLevelUps > 0) { openLevelUp(); return; }
       spawn();
       return;
     }
@@ -505,13 +515,33 @@
       m.tile.vy = 0;
     }
     const newLevel = 1 + Math.floor(wordsCleared / WORDS_PER_LEVEL);
-    if (newLevel > level) {
-      level = newLevel;
-      showBanner('LEVEL ' + level);
-      sfx.level();
-    }
+    pendingLevelUps += newLevel - level;
+    level = newLevel;
     shake = Math.min(6, 2 + cells.size / 4);
     state = 'settling';
+  }
+
+  // Hooks for later tasks: afterLevelUp returns true when it started a clear (which spawns on its own);
+  // syncRules pushes the run's perks into the rules that depend on them.
+  function afterLevelUp() { return false; }
+  function syncRules() {}
+
+  function openLevelUp() {
+    const cards = forcedCards || U.offerCards(run, Math.random);
+    forcedCards = null;
+    lvl = { cards, sel: 0, t: 0, taken: null };
+    state = 'levelup';
+    sfx.level();
+  }
+
+  function updateLevelUp(dt) {
+    lvl.t += dt;
+    if (lvl.taken && lvl.t - lvl.taken.t > CLEAR_TIME) {
+      lvl = null;
+      pendingLevelUps--;
+      if (pendingLevelUps > 0) openLevelUp();
+      else if (!afterLevelUp()) spawn();
+    }
   }
 
   function showBanner(text) {
@@ -543,6 +573,7 @@
       clearing.t += dt;
       if (clearing.t >= CLEAR_TIME) finishClear();
     } else if (state === 'settling') updateSettling(dt);
+    else if (state === 'levelup') updateLevelUp(dt);
     else if (state === 'over') overTime += dt;
     if (state !== 'paused') updateFx(dt);
   }
@@ -674,6 +705,18 @@
       case 'over':
         if ((action === 'start' || action === 'drop') && overTime > 900) newGame();
         break;
+      case 'levelup':
+        if (action === 'left' || action === 'right') {
+          const n = lvl.cards.length;
+          lvl.sel = (lvl.sel + (action === 'left' ? n - 1 : 1)) % n;
+          sfx.move();
+        } else if ((action === 'drop' || action === 'start') && lvl.t >= 500 && !lvl.taken) {
+          U.takeCard(run, lvl.cards[lvl.sel]);
+          syncRules();
+          lvl.taken = { t: lvl.t };
+          sfx.take();
+        }
+        break;
       case 'paused':
         if (action === 'pause' || action === 'start') state = 'play';
         break;
@@ -718,6 +761,7 @@
       ctx.fillRect(Math.round(g.x), Math.round(g.y) - 1, 1, 3);
     }
     if (state === 'title') drawTitle();
+    else if (state === 'levelup') drawLevelUp();
     else if (state === 'paused') drawPaused();
     else if (state === 'over') drawGameOver();
   }
@@ -789,16 +833,98 @@
   }
 
   // Red rule with a boxed caption across the well, like Downwell's "GEM HIGH".
-  function drawRuleBanner(text, y, color = WHITE) {
-    const cx = WELL_X + Math.floor(WELL_W / 2);
+  function drawRuleBanner(text, y, color = WHITE, x0 = WELL_X, x1 = WELL_X + WELL_W) {
+    const cx = Math.floor((x0 + x1) / 2);
     const w = textWidth(text) + 8;
     ctx.fillStyle = RED;
-    ctx.fillRect(WELL_X + 6, y + 3, WELL_W - 12, 2);
-    ctx.fillRect(WELL_X + 4, y + 2, 2, 4);
-    ctx.fillRect(WELL_X + WELL_W - 6, y + 2, 2, 4);
+    ctx.fillRect(x0 + 6, y + 3, x1 - x0 - 12, 2);
+    ctx.fillRect(x0 + 4, y + 2, 2, 4);
+    ctx.fillRect(x1 - 6, y + 2, 2, 4);
     ctx.fillStyle = BLACK;
     ctx.fillRect(cx - Math.floor(w / 2), y - 1, w, 10);
     drawText(text, cx, y, color, { align: 'center' });
+  }
+
+  // ---- level-up screen: the frozen well under a 1-in-4 dither, three cards over it ----
+  const CARD_Y = 68, CARD_W = 96, CARD_H = 150;
+  const cardX = i => 8 + i * 104;
+  let ditherMask = null;
+  const iconCache = new Map();
+  function iconSprite(id, on) {
+    const k = id + (on ? ':on' : ':off');
+    if (iconCache.has(k)) return iconCache.get(k);
+    const c = makeCanvas(32, 32);
+    const g = c.getContext('2d');
+    ICONS.card[id].forEach((row, y) => [...row].forEach((p, x) => {
+      if (p === '.') return;
+      g.fillStyle = p === 'w' ? (on ? WHITE : GREY) : (on ? RED : DIMRED);
+      g.fillRect(x * 2, y * 2, 2, 2);
+    }));
+    iconCache.set(k, c);
+    return c;
+  }
+
+  function drawCard(i, card, sel) {
+    const item = card.kind === 'item';
+    const def = item ? U.ITEMS[card.id] : U.PERKS[card.id];
+    const x = cardX(i), y = CARD_Y, w = CARD_W, h = CARD_H, cx = x + w / 2;
+    const now = lvl.t;
+    ctx.fillStyle = BLACK;
+    ctx.fillRect(x, y, w, h);
+    if (lvl.taken && sel) {
+      const t = lvl.t - lvl.taken.t;
+      ctx.fillStyle = Math.floor(t / 60) % 2 ? RED : WHITE;
+      ctx.fillRect(x + 1, y, w - 2, h);
+      ctx.fillRect(x, y + 1, w, h - 2);
+      drawText(def.name, cx, y + 58, BLACK, { align: 'center' });
+      return;
+    }
+    if (sel) {
+      ctx.fillStyle = RED;
+      ctx.fillRect(x + 2, y, w - 4, 2); ctx.fillRect(x + 2, y + h - 2, w - 4, 2);
+      ctx.fillRect(x, y + 2, 2, h - 4); ctx.fillRect(x + w - 2, y + 2, 2, h - 4);
+      const bob = Math.floor(now / 300) % 2;
+      for (let r = 0; r < 4; r++) ctx.fillRect(cx - 3 + r, y - 8 + r + bob, 7 - 2 * r, 1);
+    } else {
+      ctx.fillStyle = DIM;
+      for (let k = 2; k < w - 2; k += 2) { ctx.fillRect(x + k, y, 1, 1); ctx.fillRect(x + k, y + h - 1, 1, 1); }
+      for (let k = 2; k < h - 2; k += 2) { ctx.fillRect(x, y + k, 1, 1); ctx.fillRect(x + w - 1, y + k, 1, 1); }
+    }
+    const lift = sel && Math.floor(now / 300) % 2 ? -1 : 0;
+    if (item) {
+      ctx.fillStyle = sel ? RED : DIMRED;
+      ctx.fillRect(x + 4, y + 4, w - 8, 11);
+      drawText('ITEM', cx, y + 6, sel ? BLACK : GREY, { align: 'center' });
+      ctx.drawImage(iconSprite(card.id, sel), cx - 16, y + 18 + lift);
+    } else {
+      ctx.drawImage(iconSprite(card.id, sel), cx - 16, y + 14 + lift);
+    }
+    drawText(def.name, cx, y + 58, sel ? WHITE : GREY, { align: 'center' });
+    drawText(item ? 'ONE USE' : def.family, cx, y + 70, sel ? RED : DIMRED, { align: 'center' });
+    ctx.fillStyle = sel ? RED : DIM;
+    for (let k = x + 12; k < x + w - 12; k += 2) ctx.fillRect(k, y + 84, 1, 1);
+    def.text(minLen, run).forEach((d, j) => drawText(d, cx, y + 94 + j * 11, sel ? WHITE : GREY, { align: 'center' }));
+  }
+
+  function drawLevelUp() {
+    if (!ditherMask) {
+      ditherMask = makeCanvas(W, H);
+      const g = ditherMask.getContext('2d');
+      g.fillStyle = BLACK;
+      for (let y = 18; y < H; y++) for (let x = 0; x < W; x++) if (x % 2 || y % 2) g.fillRect(x, y, 1, 1);
+    }
+    ctx.drawImage(ditherMask, 0, 0);
+    ctx.fillStyle = BLACK;
+    ctx.fillRect(100, 22, 120, 34);
+    drawText('LEVEL UP', 160, 28, RED, { scale: 2, align: 'center' });
+    drawText('LEVEL UP', 160, 26, WHITE, { scale: 2, align: 'center', outline: BLACK });
+    drawRuleBanner('PICK ONE', 48, WHITE, 8, W - 8);
+    lvl.cards.forEach((card, i) => drawCard(i, card, i === lvl.sel));
+    ctx.fillStyle = BLACK;
+    ctx.fillRect(80, 234, 160, 14);
+    const parts = [['\u2190 \u2192', RED], [' CHOOSE   ', WHITE], ['SPACE', RED], [' TAKE', WHITE]];
+    let x = 160 - Math.floor(textWidth(parts.map(p => p[0]).join('')) / 2);
+    for (const [str, col] of parts) { drawText(str, x, 238, col); x += str.length * 6; }
   }
 
   function drawBanner() {
@@ -978,6 +1104,24 @@
     get score() { return score; },
     get gen() { return gen; },
     get tracker() { return tracker; },
+    get run() { return run; },
+    get level() { return level; },
+    get pendingLevelUps() { return pendingLevelUps; },
+    get wordsCleared() { return wordsCleared; },
+    get wordsPerLevel() { return WORDS_PER_LEVEL; },
+    get hint() { return hint.words.slice(); },
     newGame,
+    grant(perkId) { U.takeCard(run, { kind: 'perk', id: perkId }); syncRules(); },
+    give(itemId, n = 1) { for (let i = 0; i < n; i++) U.addItem(run, itemId); },
+    levelUp(cards) { pendingLevelUps++; if (cards) forcedCards = cards; },
+    // Swap the falling piece for a lettered one (scripted checks).
+    setPiece(type, letters, x) {
+      piece = L.createPiece(type, letters);
+      piece.hookIdx = [];
+      piece.x = x;
+      piece.y = -Math.min(...piece.cells.map(c => c.y));
+      dropTimer = lockTimer = lockResets = 0;
+      updateHints();
+    },
   };
 })();
