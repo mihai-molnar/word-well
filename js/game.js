@@ -456,10 +456,12 @@
       if (y < 0) return;
       tmp[y][piece.x + c.x] = cellTile(c);
     }
-    for (const w of L.findWords(tmp, dict, rules)) {
+    const found = L.findWords(tmp, dict, rules);
+    for (const w of found) {
       hint.words.push(w.word);
       for (const p of w.cells) hint.cells.add(key(p.x, p.y));
     }
+    for (const k of L.breakStones(tmp, new Set(), found)) hint.cells.add(k); // stones the word would break
   }
 
   function afterMove() {
@@ -1006,6 +1008,25 @@
     ctx.drawImage(danger ? walls.leftRed : walls.left, WELL_X - WALL, 0);
     ctx.drawImage(danger ? walls.rightRed : walls.right, WELL_X + WELL_W, 0);
     ctx.drawImage(walls.floor, WELL_X - WALL, WELL_Y + WELL_H);
+    // Last piece before a rise: the incoming row blinks on the floor strip.
+    if (riseLeft === 0 && riseLayout && (state === 'play' || state === 'paused') && Math.floor(time / 200) % 2 === 0) {
+      const fy = WELL_Y + WELL_H + 1;
+      ctx.fillStyle = BLACK;
+      ctx.fillRect(WELL_X, fy, WELL_W, 6);
+      for (let x = 0; x < COLS; x++) {
+        const px = cellPx(x);
+        if (riseLayout[x]) {
+          ctx.fillStyle = RED;
+          ctx.fillRect(px, fy, 11, 1); ctx.fillRect(px, fy + 5, 11, 1);
+          ctx.fillRect(px, fy, 1, 6); ctx.fillRect(px + 10, fy, 1, 6);
+        } else {
+          ctx.fillStyle = WHITE;
+          ctx.fillRect(px, fy, 11, 6);
+          ctx.fillStyle = BLACK;
+          ctx.fillRect(px + 5, fy, 1, 6);
+        }
+      }
+    }
   }
 
   function drawBoard() {
@@ -1220,7 +1241,7 @@
 
     // Left panel: words found, newest first.
     drawHeader('WORDS', LEFT_X, 26);
-    recent.slice(0, 21).forEach((r, i) => {
+    recent.slice(0, 17).forEach((r, i) => {
       const pts = String(r.pts);
       const room = 12 - pts.length;
       const word = r.word.length > room ? r.word.slice(0, room - 1) + '.' : r.word;
@@ -1234,6 +1255,7 @@
     if (gen) drawMiniPiece(gen.plan[0] || { type: gen.peekType() }, RIGHT_X + PANEL_W / 2, 58, 'active');
 
     drawTargetPanel(92);
+    drawRisePanel(222);
     drawItemsPanel(146);
     drawFreezeTimer();
     drawText('C', RIGHT_X, 256, RED);
@@ -1295,6 +1317,22 @@
     }
   }
 
+  // Countdown to the next stone row: one pip per piece, blinking on the last one.
+  function drawRisePanel(y) {
+    drawHeader('RISE', LEFT_X, y);
+    if (riseLeft === null) {
+      drawText('FROM LV' + (L.RISE_FROM + L.HAZARD_MIN_OFFSET * (minLen - 3)), LEFT_X, y + 17, GREY);
+      return;
+    }
+    const blink = riseLeft === 0 && Math.floor(time / 200) % 2 === 0;
+    for (let i = 0; i < riseEvery; i++) {
+      const px = LEFT_X + PANEL_W - (riseEvery - i) * 8 + 1, py = y + 17;
+      ctx.fillStyle = RED;
+      if (i < riseLeft) ctx.fillRect(px, py, 6, 5);
+      else if (!blink) { ctx.fillRect(px, py, 6, 1); ctx.fillRect(px, py + 4, 6, 1); ctx.fillRect(px, py, 1, 5); ctx.fillRect(px + 5, py, 1, 5); }
+    }
+  }
+
   function drawTitlePanels() {
     drawHeader('CONTROLS', LEFT_X, 26);
     [
@@ -1311,6 +1349,7 @@
       ['WORDS BREAK,', WHITE], ['TILES ABOVE', WHITE], ['FALL IN.', WHITE], ['', WHITE],
       ['CHAINS AND', RED], ['LONG WORDS', RED], ['SCORE MORE.', RED], ['', WHITE],
       ['RED LETTERS', RED], ['ARE PART OF', WHITE], ['THE TARGET.', WHITE], ['SPELL IT FOR', WHITE], ['X3 + BLAST.', WHITE],
+      ['STONES RISE.', RED], ['WORDS BREAK', WHITE], ['STONES NEXT', WHITE], ['TO THEM.', WHITE],
     ].forEach(([t, c], i) => drawText(t, RIGHT_X, 42 + i * 10, c));
     drawText('BEST ' + best, RIGHT_X, 252, GREY);
   }
