@@ -111,7 +111,7 @@
 
   function gravityMs(run, level) {
     const lvl = level + (has(run, 'daredevil') ? 2 : 0);
-    return Math.max(30, 900 * Math.pow(0.80, lvl - 1)) * Math.pow(4 / 3, count(run, 'feather'));
+    return Math.max(70, 900 * Math.pow(0.86, lvl - 1)) * Math.pow(4 / 3, count(run, 'feather'));
   }
   const lockDelayMs = run => (has(run, 'sticky') ? 1000 : 500);
   const bombRadius = run => (has(run, 'bigbang') ? 2 : 1);
