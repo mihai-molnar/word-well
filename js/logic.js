@@ -45,6 +45,11 @@
   const FIRST_TARGET = 3; // plain pieces before the first target
   const TARGET_BONUS = 3; // score multiplier for spelling the target
 
+  // Hooks: the dealer letters a piece so it can turn letters already on the board into a longer word.
+  const HOOK_MIN = 4; // shortest hook word
+  const HOOK_MAX = 7; // longest hook word
+  const HOOK_RATE = 0.9; // share of plain pieces that try to be a hook
+
   function isVowel(ch) {
     return ch === 'a' || ch === 'e' || ch === 'i' || ch === 'o' || ch === 'u';
   }
@@ -82,9 +87,14 @@
 
   // words: valid answers (3+ letters). infixes: every 2-4 letter chunk that occurs inside a
   // word, used to check that a piece's letters can actually sit inside real words.
+  // byPrefix/bySuffix: hook-length words (no Q, which only exists as the QU tile) keyed by
+  // "length|prefix" and "length|suffix", for wordsMatching.
   function buildDictionary(text) {
     const words = new Set();
     const infixes = new Set();
+    const byPrefix = new Map();
+    const bySuffix = new Map();
+    const add = (map, k, w) => { const list = map.get(k); if (list) list.push(w); else map.set(k, [w]); };
     let maxLen = 0;
     for (const raw of text.split(/\s+/)) {
       const w = raw.toLowerCase();
@@ -94,8 +104,20 @@
       for (let a = 0; a < w.length; a++) {
         for (let n = 2; n <= 4 && a + n <= w.length; n++) infixes.add(w.slice(a, a + n));
       }
+      if (w.length < HOOK_MIN || w.length > HOOK_MAX || w.includes('q')) continue;
+      for (let k = 1; k < w.length; k++) {
+        add(byPrefix, w.length + '|' + w.slice(0, k), w);
+        add(bySuffix, w.length + '|' + w.slice(w.length - k), w);
+      }
     }
-    return { words, infixes, maxLen };
+    return { words, infixes, maxLen, byPrefix, bySuffix };
+  }
+
+  // Hook-length words of exactly len letters that start with pre and end with suf (not both empty).
+  function wordsMatching(dict, len, pre, suf) {
+    if (!pre) return dict.bySuffix.get(len + '|' + suf) || [];
+    const list = dict.byPrefix.get(len + '|' + pre) || [];
+    return suf ? list.filter(w => w.endsWith(suf)) : list;
   }
 
   function emptyGrid(cols = COLS, rows = ROWS) {
@@ -427,8 +449,8 @@
   }
 
   const api = {
-    COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS,
-    isVowel, makeRng, buildDictionary, emptyGrid, createPiece, rotateCells, collides, tryRotate,
+    COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, HOOK_MIN, HOOK_MAX, HOOK_RATE,
+    isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
     findWords, applyGravity, scoreWord, vowelRatio, runsOf, PieceGenerator, TargetTracker,
   };
   root.WordWellLogic = api;

@@ -133,6 +133,18 @@ T3.placed(null); T3.endTurn(g10); T3.placed(null); T3.endTurn(g10);
 T3.placed(null);
 assert.deepStrictEqual(T3.hit(g10, L.findWords(g10, dict, 3)).map(w => w.word), ['strong'], 'the 3rd piece can still complete it');
 
+// --- pattern index: hook-length words by prefix and suffix
+assert.ok(L.wordsMatching(dict, 6, 'st', '').includes('strong'));
+assert.deepStrictEqual(L.wordsMatching(dict, 6, 'pl', 'et'), ['planet']);
+assert.ok(L.wordsMatching(dict, 7, '', 'ing').includes('nothing'));
+for (const [len, pre, suf] of [[5, 'c', ''], [6, '', 'er'], [7, 'st', 'ng'], [4, 'qu', '']]) {
+  for (const w of L.wordsMatching(dict, len, pre, suf)) {
+    assert.ok(w.length === len && w.startsWith(pre) && w.endsWith(suf) && !w.includes('q'), `${w} matches ${len}|${pre}|${suf}`);
+  }
+}
+assert.deepStrictEqual(L.wordsMatching(dict, 3, 'ca', ''), [], 'hooks are 4+ letters');
+assert.deepStrictEqual(L.wordsMatching(dict, 8, 'st', ''), [], 'hooks are at most 7 letters');
+
 // --- generator stats
 const gen = new L.PieceGenerator(dict, { rng: L.makeRng(1) });
 let vow = 0, n = 0, bad = 0; const freq = {}; const samples = {};
