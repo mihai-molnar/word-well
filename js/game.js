@@ -301,10 +301,17 @@
   // ---------------------------------------------------------------------------------------------
   // Game state
   // ---------------------------------------------------------------------------------------------
-  let state = 'title'; // title | play | clearing | settling | levelup | paused | over
+  let state = 'title'; // title | play | clearing | settling | levelup | paused | shop | over
   let minLen = store.get('minLen', 3);
   let showHints = store.get('hints', true);
   let best = store.get('best', 0);
+  // The gem bank and the shop's purchases (U.loadSave). ?gems=N: a sandbox save that is never written.
+  const SANDBOX = /[?&]gems=(\d+)/.exec(location.search);
+  const LEVEL_QUERY = /[?&]level=\d+/.test(location.search); // ?level=N runs bank no gems
+  let save = SANDBOX ? { gems: +SANDBOX[1], owned: [] } : U.loadSave(store.get('shop', null));
+  const saveShop = () => { if (!SANDBOX) store.set('shop', save); };
+  // Another tab may have banked or bought since this one loaded: re-read before using or writing it.
+  const reloadSave = () => { if (!SANDBOX) save = U.loadSave(store.get('shop', null)); };
 
   let grid = L.emptyGrid();
   let gen = null;
@@ -312,6 +319,9 @@
   let piece = null;
   let score = 0, shownScore = 0, wordsCleared = 0, level = 1, chain = 0, maxChain = 0;
   let longest = '', newBest = false;
+  let gemsRun = 0, shownGems = 0; // gems this run: the true count and the one the HUD has caught up to
+  let lastBank = { from: 0, banked: 0 }; // set at game over: the bank before, and what the run added
+  let shopUi = null; // { row, col, t, shown, flash, deny } while the shop is open; row 3 is DIVE
   let targetsHit = 0, targetsSeen = 0;
   let dropTimer = 0, lockTimer = 0, lockResets = 0;
   let freezeLeft = 0; // ms of FREEZE left
@@ -330,18 +340,22 @@
   let shake = 0, gemFlash = 0, itemFlash = 0, time = 0, overTime = 0;
 
   function newGame() {
+    reloadSave();
     grid = L.emptyGrid();
     gen = new L.PieceGenerator(dict, { minLen, targets: TARGETS });
     tracker = new L.TargetTracker();
     score = shownScore = wordsCleared = chain = maxChain = 0;
+    gemsRun = shownGems = 0;
     targetsHit = targetsSeen = 0;
     level = START_LEVEL;
     wordsCleared = (START_LEVEL - 1) * WORDS_PER_LEVEL;
     riseLeft = riseLayout = null;
-    run = U.newRun();
+    run = U.newRun(save.owned);
+    U.startKit(run, save.owned, Math.random);
     pendingLevelUps = 0;
     lvl = null;
-    forcedCards = null;
+    const early = save.owned.includes('earlypick'); // EARLY PICK: a pick-one screen before the first piece
+    if (!early) forcedCards = null;
     freezeLeft = 0;
     longest = '';
     newBest = false;
@@ -355,7 +369,7 @@
     syncRules();
     state = 'play';
     syncHazards();
-    spawn();
+    if (early) { pendingLevelUps = 1; openLevelUp(true); } else spawn();
   }
 
   const hazLevel = () => L.hazardLevel(level, minLen);
@@ -619,6 +633,7 @@
     const { found, cells, gained } = clearing;
     clearing = null;
     score += gained;
+    gemsRun += cells.size; // one gem per cleared tile, whatever cleared it
     wordsCleared += found.filter(w => !w.short).length; // SHORT FUSE words don't count toward levels
     for (const k of cells) {
       const [x, y] = k.split(',').map(Number);
@@ -629,7 +644,7 @@
           life: rand(350, 800), color: Math.random() < 0.5 ? WHITE : RED, size: Math.random() < 0.3 ? 2 : 1,
         });
       }
-      for (let i = 0; i < 2; i++) gems.push({ x: px, y: py, vx: rand(-0.15, 0.15), vy: rand(-0.25, -0.08), t: 0 });
+      gems.push({ x: px, y: py, vx: rand(-0.15, 0.15), vy: rand(-0.25, -0.08), t: 0 });
       grid[y][x] = null;
     }
     for (const m of L.applyGravity(grid)) {
@@ -659,10 +674,11 @@
     updateHints();
   }
 
-  function openLevelUp() {
+  // early: the EARLY PICK screen before a run's first piece (same rules, its own header).
+  function openLevelUp(early = false) {
     const cards = forcedCards || U.offerCards(run, Math.random);
     forcedCards = null;
-    lvl = { cards, sel: 0, t: 0, taken: null };
+    lvl = { cards, sel: 0, t: 0, taken: null, early };
     state = 'levelup';
     sfx.level();
   }
@@ -691,8 +707,68 @@
       newBest = true;
       store.set('best', best);
     }
+    // Bank the run's gems (the true count: gems still flying count too).
+    reloadSave();
+    const banked = LEVEL_QUERY ? 0 : U.gemsBanked(gemsRun, minLen);
+    lastBank = { from: save.gems, banked };
+    save.gems += banked;
+    saveShop();
+    shownGems = gemsRun;
     shake = 4;
     sfx.over();
+  }
+
+  // The gem shop between runs. The cursor starts on DIVE and keys wait 500 ms, so a key mashed at
+  // game over can't buy anything. From a run, the bank counts up from where it was before.
+  function openShop(fromRun) {
+    reloadSave();
+    shopUi = { row: U.SHELVES.length, col: 0, t: 0, shown: fromRun ? lastBank.from : save.gems, flash: null, deny: 0 };
+    piece = null;
+    state = 'shop';
+  }
+
+  // Back to the title from the shop: the last run's board and level go, as the title shows an empty well.
+  function toTitle() {
+    grid = L.emptyGrid();
+    level = 1;
+    wordsCleared = 0;
+    state = 'title';
+  }
+
+  function updateShop(dt) {
+    shopUi.t += dt;
+    shopUi.deny = Math.max(0, shopUi.deny - dt);
+    if (shopUi.flash && (shopUi.flash.t += dt) > CLEAR_TIME) shopUi.flash = null;
+    if (shopUi.shown < save.gems) {
+      shopUi.shown = Math.min(save.gems, shopUi.shown + Math.max(1, Math.ceil((save.gems - shopUi.shown) * dt * 0.004)));
+      gemFlash = 120;
+      sfx.gem();
+    }
+  }
+
+  function shopKey(action) {
+    const ui = shopUi, dive = U.SHELVES.length;
+    if (action === 'left' || action === 'right') {
+      if (ui.row === dive) return;
+      ui.col = Math.min(Math.max(0, ui.col + (action === 'left' ? -1 : 1)), U.SHELVES[ui.row].slots.length - 1);
+      sfx.move();
+    } else if (action === 'cw' || action === 'down') {
+      ui.row = Math.min(Math.max(0, ui.row + (action === 'down' ? 1 : -1)), dive);
+      if (ui.row < dive) ui.col = Math.min(ui.col, U.SHELVES[ui.row].slots.length - 1);
+      sfx.move();
+    } else if (action === 'start' || (action === 'drop' && ui.row === dive)) {
+      newGame();
+    } else if (action === 'drop') {
+      if (ui.flash) return; // a double tap on POUCH must not buy POUCH II too
+      reloadSave();
+      const { entry, owned } = U.slotEntry(U.SHELVES[ui.row].slots[ui.col], save);
+      if (owned) return;
+      if (!U.buy(save, entry.id).ok) { sfx.no(); ui.deny = 300; return; }
+      saveShop();
+      ui.shown = save.gems;
+      ui.flash = { row: ui.row, col: ui.col, t: 0 };
+      sfx.take();
+    }
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -707,6 +783,7 @@
       if (clearing.t >= CLEAR_TIME) finishClear();
     } else if (state === 'settling') updateSettling(dt);
     else if (state === 'levelup') updateLevelUp(dt);
+    else if (state === 'shop') updateShop(dt);
     else if (state === 'over') overTime += dt;
     if (state !== 'paused') updateFx(dt);
   }
@@ -765,6 +842,7 @@
         g.vy += (dy / d * sp - g.vy) * 0.25;
         if (d < 4 + sp * dt || g.t > 2500) {
           g.done = true;
+          shownGems = Math.min(gemsRun, shownGems + 1);
           gemFlash = 120;
           sfx.gem();
         }
@@ -836,6 +914,7 @@
     switch (state) {
       case 'title':
         if (action === 'start' || action === 'drop') newGame();
+        else if (action === 'down') openShop(false);
         else if (action === 'left' || action === 'right') {
           minLen = Math.min(5, Math.max(3, minLen + (action === 'left' ? -1 : 1)));
           store.set('minLen', minLen);
@@ -843,7 +922,11 @@
         }
         break;
       case 'over':
-        if ((action === 'start' || action === 'drop') && overTime > 900) newGame();
+        if ((action === 'start' || action === 'drop') && overTime > 900) openShop(true);
+        break;
+      case 'shop':
+        if (action === 'pause') toTitle();
+        else if (shopUi.t >= 500) shopKey(action);
         break;
       case 'levelup':
         if (lvl.taken) break;
@@ -851,6 +934,10 @@
           const n = lvl.cards.length;
           lvl.sel = (lvl.sel + (action === 'left' ? n - 1 : 1)) % n;
           sfx.move();
+        } else if (action === 'swap' && run.redeal && lvl.t >= 500) { // SECOND LOOK: once per run
+          lvl.cards = U.offerCards(run, Math.random);
+          run.redeal = false;
+          sfx.item();
         } else if ((action === 'drop' || action === 'start') && lvl.t >= 500) {
           U.takeCard(run, lvl.cards[lvl.sel]);
           syncRules();
@@ -990,6 +1077,7 @@
     }
     if (state === 'title') drawTitle();
     else if (state === 'levelup') drawLevelUp();
+    else if (state === 'shop') drawShop();
     else if (state === 'paused') drawPaused();
     else if (state === 'over') drawGameOver();
   }
@@ -1004,7 +1092,7 @@
     for (let y = 1; y < ROWS; y++) {
       for (let x = 1; x < COLS; x++) ctx.fillRect(WELL_X + x * CELL, WELL_Y + y * CELL, 1, 1);
     }
-    const danger = state !== 'title' && isDanger() && Math.floor(time / 300) % 2 === 0;
+    const danger = state !== 'title' && state !== 'shop' && isDanger() && Math.floor(time / 300) % 2 === 0;
     ctx.drawImage(danger ? walls.leftRed : walls.left, WELL_X - WALL, 0);
     ctx.drawImage(danger ? walls.rightRed : walls.right, WELL_X + WELL_W, 0);
     ctx.drawImage(walls.floor, WELL_X - WALL, WELL_Y + WELL_H);
@@ -1170,7 +1258,8 @@
     def.text(minLen, run).forEach((d, j) => drawText(d, cx, y + 94 + j * 11, sel ? WHITE : GREY, { align: 'center' }));
   }
 
-  function drawLevelUp() {
+  // Everything under the HUD strip, 3 pixels in 4 blacked out.
+  function drawDither() {
     if (!ditherMask) {
       ditherMask = makeCanvas(W, H);
       const g = ditherMask.getContext('2d');
@@ -1178,22 +1267,111 @@
       for (let y = 18; y < H; y++) for (let x = 0; x < W; x++) if (x % 2 || y % 2) g.fillRect(x, y, 1, 1);
     }
     ctx.drawImage(ditherMask, 0, 0);
+  }
+
+  // A big white title with a red drop shadow, in a black box below the HUD strip.
+  function drawScreenTitle(text) {
+    const w = Math.max(120, textWidth(text, 2) + 8);
     ctx.fillStyle = BLACK;
-    ctx.fillRect(100, 22, 120, 34);
-    drawText('LEVEL UP', 160, 28, RED, { scale: 2, align: 'center' });
-    drawText('LEVEL UP', 160, 26, WHITE, { scale: 2, align: 'center', outline: BLACK });
+    ctx.fillRect(160 - w / 2, 22, w, 34);
+    drawText(text, 160, 28, RED, { scale: 2, align: 'center' });
+    drawText(text, 160, 26, WHITE, { scale: 2, align: 'center', outline: BLACK });
+  }
+
+  function drawLevelUp() {
+    drawDither();
+    drawScreenTitle(lvl.early ? 'EARLY PICK' : 'LEVEL UP');
     drawRuleBanner('PICK ONE', 48, WHITE, 8, W - 8);
     lvl.cards.forEach((card, i) => drawCard(i, card, i === lvl.sel));
+    const parts = [['\u2190 \u2192', RED], [' CHOOSE   ', WHITE], ['SPACE', RED], [' TAKE', WHITE]];
+    if (run.redeal) parts.push(['   V', RED], [' REDEAL', WHITE]);
+    const tw = textWidth(parts.map(p => p[0]).join(''));
     ctx.fillStyle = BLACK;
-    ctx.fillRect(80, 234, 160, 14);
+    ctx.fillRect(Math.min(80, 154 - Math.floor(tw / 2)), 234, Math.max(160, tw + 12), 14);
     if (lvl.taken) {
       const c = lvl.cards[lvl.sel];
       drawText((c.kind === 'item' ? U.ITEMS : U.PERKS)[c.id].name + ' TAKEN', 160, 238, RED, { align: 'center' });
       return;
     }
-    const parts = [['\u2190 \u2192', RED], [' CHOOSE   ', WHITE], ['SPACE', RED], [' TAKE', WHITE]];
-    let x = 160 - Math.floor(textWidth(parts.map(p => p[0]).join('')) / 2);
+    let x = 160 - Math.floor(tw / 2);
     for (const [str, col] of parts) { drawText(str, x, 238, col); x += str.length * 6; }
+  }
+
+  // ---- the gem shop: three shelves of slots on the left, the selected entry on the right ----
+  const SHELF_Y = [62, 124, 186], SLOT_DX = 38, DESC_X = 208, DIVE_Y = 216;
+
+  function drawShop() {
+    drawDither();
+    ctx.fillStyle = BLACK;
+    ctx.fillRect(4, 58, 196, 188);
+    ctx.fillRect(DESC_X - 4, 58, 112, 188);
+    drawScreenTitle('SHOP');
+    const ui = shopUi, now = ui.t, dive = U.SHELVES.length;
+    U.SHELVES.forEach((shelf, r) => {
+      drawHeader(shelf.name, 8, SHELF_Y[r], 188);
+      shelf.slots.forEach((slot, i) => {
+        const { entry, owned } = U.slotEntry(slot, save);
+        const x = 8 + i * SLOT_DX, y = SHELF_Y[r] + 14, cx = x + 16;
+        const sel = ui.row === r && ui.col === i;
+        if (ui.flash && ui.flash.row === r && ui.flash.col === i) {
+          ctx.fillStyle = Math.floor(ui.flash.t / 60) % 2 ? RED : WHITE;
+          ctx.fillRect(x - 2, y - 2, 36, 36);
+        } else {
+          if (sel) {
+            ctx.fillStyle = RED;
+            ctx.fillRect(x - 2, y - 2, 36, 1); ctx.fillRect(x - 2, y + 33, 36, 1);
+            ctx.fillRect(x - 2, y - 2, 1, 36); ctx.fillRect(x + 33, y - 2, 1, 36);
+          }
+          const lift = sel && Math.floor(now / 300) % 2 ? -1 : 0;
+          ctx.drawImage(iconSprite(slot, owned), x, y + lift);
+        }
+        if (owned) drawText('OWN', cx, y + 36, GREY, { align: 'center' });
+        else if (!(sel && ui.deny > 0 && Math.floor(ui.deny / 60) % 2)) {
+          drawText(String(entry.price), cx, y + 36, save.gems >= entry.price ? WHITE : DIMRED, { align: 'center' });
+        }
+      });
+    });
+    drawShopEntry(ui.row === dive ? null : U.slotEntry(U.SHELVES[ui.row].slots[ui.col], save));
+
+    // DIVE: starts the next run (ENTER does too, from anywhere).
+    ctx.fillStyle = RED;
+    if (ui.row === dive) ctx.fillRect(DESC_X, DIVE_Y, 96, 16);
+    else {
+      ctx.fillRect(DESC_X, DIVE_Y, 96, 1); ctx.fillRect(DESC_X, DIVE_Y + 15, 96, 1);
+      ctx.fillRect(DESC_X, DIVE_Y, 1, 16); ctx.fillRect(DESC_X + 95, DIVE_Y, 1, 16);
+    }
+    drawText('DIVE', DESC_X + 48, DIVE_Y + 5, ui.row === dive ? BLACK : WHITE, { align: 'center' });
+
+    const parts = [['↑↓←→', RED], [' MOVE  ', WHITE], ['SPACE', RED], [' BUY  ', WHITE], ['ENTER', RED], [' DIVE', WHITE]];
+    const lw = textWidth(parts.map(p => p[0]).join(''));
+    let x = 160 - Math.floor(lw / 2);
+    ctx.fillStyle = BLACK;
+    ctx.fillRect(x - 4, 254, lw + 8, 14);
+    for (const [str, col] of parts) { drawText(str, x, 258, col); x += str.length * 6; }
+  }
+
+  // The selected slot's name, kind, card text and price (or DIVE's blurb when sel is null).
+  function drawShopEntry(sel) {
+    const x = DESC_X;
+    if (!sel) {
+      drawText('DIVE', x, 62, WHITE);
+      drawText('NEW RUN', x, 74, RED);
+      ['BACK INTO', 'THE WELL.'].forEach((t, j) => drawText(t, x, 106 + j * 11, WHITE));
+      return;
+    }
+    const { entry, owned } = sel, def = U.shopDef(entry.id), kit = entry.shelf === 'KIT';
+    drawText(def.name, x, 62, WHITE);
+    drawText(def.kind, x, 74, RED);
+    if (!kit) drawText('JOINS THE DECK', x, 86, GREY);
+    ctx.fillStyle = RED;
+    for (let k = x; k < x + 96; k += 2) ctx.fillRect(k, 98, 1, 1);
+    def.text(minLen, U.newRun()).forEach((t, j) => drawText(t, x, 106 + j * 11, WHITE));
+    if (owned) { drawText(kit ? 'OWNED' : 'NOW IN DECK', x, 158, GREY); return; }
+    if (shopUi.deny > 0 && Math.floor(shopUi.deny / 60) % 2) return;
+    if (save.gems >= entry.price) {
+      const w = drawText(String(entry.price), x, 158, WHITE);
+      ctx.drawImage(gemSprite, x + w + 3, 158);
+    } else drawText('NEED ' + (entry.price - save.gems) + ' MORE', x, 158, DIMRED);
   }
 
   function drawBanner() {
@@ -1201,11 +1379,11 @@
     drawRuleBanner(banner.text, WELL_Y + 30);
   }
 
-  function drawHeader(label, x, y) {
+  function drawHeader(label, x, y, w = PANEL_W) {
     drawText(label, x, y, WHITE);
     ctx.fillStyle = RED;
-    ctx.fillRect(x, y + 9, PANEL_W, 1);
-    ctx.fillRect(x + PANEL_W - 3, y + 8, 3, 1);
+    ctx.fillRect(x, y + 9, w, 1);
+    ctx.fillRect(x + w - 3, y + 8, 3, 1);
   }
 
   // NEXT shows only the shape (letters come at spawn); a target's second piece shows its red cells.
@@ -1233,14 +1411,21 @@
     drawText('LV' + level, bx + 4, by + 2, WHITE);
     drawText(into + '/' + WORDS_PER_LEVEL, bx + bw - 4, by + 2, WHITE, { align: 'right' });
 
-    // Score with the red gem, top-right.
-    drawText(String(Math.floor(shownScore)), W - 18, 5, gemFlash > 0 ? RED : WHITE, { align: 'right' });
+    // Top-right: the score (white) and this run's gems (red, where the flying gems land). The title
+    // shows no run numbers; its panel shows the bank.
+    if (state === 'shop') {
+      drawText(String(shopUi.shown), W - 18, 5, gemFlash > 0 ? WHITE : RED, { align: 'right' }); // the bank
+    } else if (state !== 'title') {
+      drawText(String(Math.floor(shownScore)), RIGHT_X, 5, WHITE);
+      drawText(String(shownGems), W - 18, 5, gemFlash > 0 ? WHITE : RED, { align: 'right' });
+    }
     ctx.drawImage(gemSprite, GEM_X - 3, GEM_Y - 4);
     ctx.fillStyle = RED;
     ctx.fillRect(RIGHT_X, 15, W - 8 - RIGHT_X - 10, 1);
     ctx.fillRect(W - 18, 14, 8, 2);
 
     if (state === 'title') { drawTitlePanels(); return; }
+    if (state === 'shop') return; // the shop covers the side panels
 
     // Left panel: words found, newest first.
     drawHeader('WORDS', LEFT_X, 26);
@@ -1348,12 +1533,13 @@
 
     drawHeader('HOW TO', RIGHT_X, 26);
     [
-      ['SPELL WORDS', WHITE], ['ACROSS → OR', WHITE], ['DOWN ↓.', WHITE], ['', WHITE],
+      ['SPELL WORDS', WHITE], ['ACROSS → OR', WHITE], ['DOWN ↓.', WHITE],
       ['WORDS BREAK,', WHITE], ['TILES ABOVE', WHITE], ['FALL IN.', WHITE], ['', WHITE],
       ['CHAINS AND', RED], ['LONG WORDS', RED], ['SCORE MORE.', RED], ['', WHITE],
       ['RED LETTERS', RED], ['ARE PART OF', WHITE], ['THE TARGET.', WHITE], ['SPELL IT FOR', WHITE], ['X3 + BLAST.', WHITE],
       ['STONES RISE.', RED], ['WORDS BREAK', WHITE], ['STONES NEXT', WHITE], ['TO THEM.', WHITE],
     ].forEach(([t, c], i) => drawText(t, RIGHT_X, 42 + i * 10, c));
+    drawText('GEMS ' + save.gems, RIGHT_X, 242, GREY);
     drawText('BEST ' + best, RIGHT_X, 252, GREY);
   }
 
@@ -1367,9 +1553,11 @@
     }
     drawRuleBanner('FALLING WORDS', 128, RED);
     if (Math.floor(time / 450) % 2 === 0) drawText('PRESS ENTER', cx, 152, WHITE, { align: 'center' });
-    drawText('MIN WORD LENGTH', cx, 176, GREY, { align: 'center' });
-    drawText('← ' + minLen + ' →', cx, 188, WHITE, { align: 'center' });
+    drawText('MIN WORD LENGTH', cx, 172, GREY, { align: 'center' });
+    drawText('← ' + minLen + ' →', cx, 184, WHITE, { align: 'center' });
+    if (minLen > 3) drawText('GEMS X' + U.GEM_MULT[minLen], cx, 194, RED, { align: 'center' });
     drawText('HINTS ' + (showHints ? 'ON' : 'OFF'), cx, 206, showHints ? RED : GREY, { align: 'center' });
+    drawText('↓ SHOP', cx, 218, GREY, { align: 'center' });
   }
 
   function drawPaused() {
@@ -1383,7 +1571,7 @@
     if (overTime < 900) return;
     const cx = WELL_X + Math.floor(WELL_W / 2);
     ctx.fillStyle = BLACK;
-    ctx.fillRect(WELL_X + 2, WELL_Y + 56, WELL_W - 4, 146);
+    ctx.fillRect(WELL_X + 2, WELL_Y + 56, WELL_W - 4, 160);
     drawText('GAME', cx, WELL_Y + 62, WHITE, { scale: 2, align: 'center' });
     drawText('OVER', cx, WELL_Y + 80, WHITE, { scale: 2, align: 'center' });
     drawRuleBanner(String(score), WELL_Y + 102, WHITE);
@@ -1396,7 +1584,8 @@
     row('CHAIN', 'X' + Math.max(1, maxChain), WELL_Y + 146);
     row('TARGETS', targetsHit + '/' + targetsSeen, WELL_Y + 158);
     row('BEST', String(best), WELL_Y + 170);
-    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER RETRY', cx, WELL_Y + 188, WHITE, { align: 'center' });
+    row('GEMS', LEVEL_QUERY ? 'NOT BANKED' : '+' + lastBank.banked + (minLen > 3 ? ' X' + U.GEM_MULT[minLen] : ''), WELL_Y + 182);
+    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER SHOP', cx, WELL_Y + 200, WHITE, { align: 'center' });
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1429,7 +1618,13 @@
     get rules() { return rules; },
     get riseLeft() { return riseLeft; },
     get timing() { return { gravity: gravityMs(), lock: lockDelayMs() }; },
+    get shop() { return save; },
+    get lvl() { return lvl; },
+    get gems() { return gemsRun; },
     newGame,
+    openShop() { openShop(false); },
+    gameOver() { if (state === 'play') gameOver(); },
+    resetShop() { save = U.emptySave(); saveShop(); },
     grant(perkId) { U.takeCard(run, { kind: 'perk', id: perkId }); syncRules(); },
     give(itemId, n = 1) { for (let i = 0; i < n; i++) U.addItem(run, itemId); },
     // Make the next row rise right after the falling piece locks.
