@@ -310,6 +310,8 @@
   const LEVEL_QUERY = /[?&]level=\d+/.test(location.search); // ?level=N runs bank no gems
   let save = SANDBOX ? { gems: +SANDBOX[1], owned: [] } : U.loadSave(store.get('shop', null));
   const saveShop = () => { if (!SANDBOX) store.set('shop', save); };
+  // Another tab may have banked or bought since this one loaded: re-read before using or writing it.
+  const reloadSave = () => { if (!SANDBOX) save = U.loadSave(store.get('shop', null)); };
 
   let grid = L.emptyGrid();
   let gen = null;
@@ -338,6 +340,7 @@
   let shake = 0, gemFlash = 0, itemFlash = 0, time = 0, overTime = 0;
 
   function newGame() {
+    reloadSave();
     grid = L.emptyGrid();
     gen = new L.PieceGenerator(dict, { minLen, targets: TARGETS });
     tracker = new L.TargetTracker();
@@ -705,6 +708,7 @@
       store.set('best', best);
     }
     // Bank the run's gems (the true count: gems still flying count too).
+    reloadSave();
     const banked = LEVEL_QUERY ? 0 : U.gemsBanked(gemsRun, minLen);
     lastBank = { from: save.gems, banked };
     save.gems += banked;
@@ -717,9 +721,18 @@
   // The gem shop between runs. The cursor starts on DIVE and keys wait 500 ms, so a key mashed at
   // game over can't buy anything. From a run, the bank counts up from where it was before.
   function openShop(fromRun) {
+    reloadSave();
     shopUi = { row: U.SHELVES.length, col: 0, t: 0, shown: fromRun ? lastBank.from : save.gems, flash: null, deny: 0 };
     piece = null;
     state = 'shop';
+  }
+
+  // Back to the title from the shop: the last run's board and level go, as the title shows an empty well.
+  function toTitle() {
+    grid = L.emptyGrid();
+    level = 1;
+    wordsCleared = 0;
+    state = 'title';
   }
 
   function updateShop(dt) {
@@ -746,6 +759,8 @@
     } else if (action === 'start' || (action === 'drop' && ui.row === dive)) {
       newGame();
     } else if (action === 'drop') {
+      if (ui.flash) return; // a double tap on POUCH must not buy POUCH II too
+      reloadSave();
       const { entry, owned } = U.slotEntry(U.SHELVES[ui.row].slots[ui.col], save);
       if (owned) return;
       if (!U.buy(save, entry.id).ok) { sfx.no(); ui.deny = 300; return; }
@@ -910,7 +925,7 @@
         if ((action === 'start' || action === 'drop') && overTime > 900) openShop(true);
         break;
       case 'shop':
-        if (action === 'pause') state = 'title';
+        if (action === 'pause') toTitle();
         else if (shopUi.t >= 500) shopKey(action);
         break;
       case 'levelup':
@@ -919,7 +934,7 @@
           const n = lvl.cards.length;
           lvl.sel = (lvl.sel + (action === 'left' ? n - 1 : 1)) % n;
           sfx.move();
-        } else if (action === 'swap' && run.redeal) { // SECOND LOOK: once per run
+        } else if (action === 'swap' && run.redeal && lvl.t >= 500) { // SECOND LOOK: once per run
           lvl.cards = U.offerCards(run, Math.random);
           run.redeal = false;
           sfx.item();
@@ -1077,7 +1092,7 @@
     for (let y = 1; y < ROWS; y++) {
       for (let x = 1; x < COLS; x++) ctx.fillRect(WELL_X + x * CELL, WELL_Y + y * CELL, 1, 1);
     }
-    const danger = state !== 'title' && isDanger() && Math.floor(time / 300) % 2 === 0;
+    const danger = state !== 'title' && state !== 'shop' && isDanger() && Math.floor(time / 300) % 2 === 0;
     ctx.drawImage(danger ? walls.leftRed : walls.left, WELL_X - WALL, 0);
     ctx.drawImage(danger ? walls.rightRed : walls.right, WELL_X + WELL_W, 0);
     ctx.drawImage(walls.floor, WELL_X - WALL, WELL_Y + WELL_H);
