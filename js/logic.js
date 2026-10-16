@@ -85,6 +85,7 @@
   // "length|prefix" and "length|suffix", for wordsMatching.
   function buildDictionary(text) {
     const words = new Set();
+    const prefixes = new Set();
     const infixes = new Set();
     const byPrefix = new Map();
     const bySuffix = new Map();
@@ -94,6 +95,7 @@
       const w = raw.toLowerCase();
       if (w.length < 3 || !/^[a-z]+$/.test(w)) continue;
       words.add(w);
+      for (let n = 1; n <= w.length; n++) prefixes.add(w.slice(0, n));
       if (w.length > maxLen) maxLen = w.length;
       for (let a = 0; a < w.length; a++) {
         for (let n = 2; n <= 4 && a + n <= w.length; n++) infixes.add(w.slice(a, a + n));
@@ -104,7 +106,7 @@
         add(bySuffix, w.length + '|' + w.slice(w.length - k), w);
       }
     }
-    return { words, infixes, maxLen, byPrefix, bySuffix };
+    return { words, prefixes, infixes, maxLen, byPrefix, bySuffix };
   }
 
   // Hook-length words of exactly len letters that start with pre and end with suf (not both empty).
@@ -186,27 +188,35 @@
   const WILD_CHS = 'abcdefghijklmnoprstuvwxyz'.split('').concat('qu');
 
   // The best dictionary word the parts can spell once each '?' is replaced (null if none).
+  // Resolves left to right and stops as soon as the text so far is no word prefix.
   function fillWilds(parts, dict, minLen) {
-    const at = [];
-    parts.forEach((p, i) => { if (p === '?') at.push(i); });
-    if (at.length > 2) return null;
-    const trial = parts.slice();
     let best = null;
     let bestScore = -1;
-    const test = () => {
-      const str = trial.join('');
-      if (str.length < minLen || str.length > dict.maxLen || !dict.words.has(str)) return;
-      const sc = scoreWord(str);
-      if (sc > bestScore || (sc === bestScore && str < best.str)) {
-        best = { str, wildChs: at.map(i => trial[i]) };
-        bestScore = sc;
+    const used = [];
+    const go = (i, str) => {
+      if (i === parts.length) {
+        if (str.length < minLen || !dict.words.has(str)) return;
+        const sc = scoreWord(str);
+        if (sc > bestScore || (sc === bestScore && str < best.str)) {
+          best = { str, wildChs: used.slice() };
+          bestScore = sc;
+        }
+        return;
+      }
+      if (parts[i] !== '?') {
+        const n = str + parts[i];
+        if (dict.prefixes.has(n)) go(i + 1, n);
+        return;
+      }
+      for (const c of WILD_CHS) {
+        const n = str + c;
+        if (!dict.prefixes.has(n)) continue;
+        used.push(c);
+        go(i + 1, n);
+        used.pop();
       }
     };
-    for (const c of WILD_CHS) {
-      trial[at[0]] = c;
-      if (at.length === 1) { test(); continue; }
-      for (const d of WILD_CHS) { trial[at[1]] = d; test(); }
-    }
+    go(0, '');
     return best;
   }
 
@@ -228,7 +238,7 @@
         if (!wilds) {
           str += p;
           if (str.length >= minLen && dict.words.has(str) && respectsTargets(a, b, str, get)) cands.push({ a, b, str });
-        } else {
+        } else if (size + wilds >= minLen) {
           const m = fillWilds(parts, dict, minLen);
           if (m && respectsTargets(a, b, m.str, get)) cands.push({ a, b, str: m.str, wildChs: m.wildChs });
         }
