@@ -1,5 +1,5 @@
 // Headless Chrome driver: opens index.html, starts a game, runs steps, saves the 320x272 canvas as a PNG.
-// Usage: node tools/shot.mjs <out.png> [--query=fast] [key:<Code> | wait:<ms> | js:<expression>] ...
+// Usage: node tools/shot.mjs <out.png> [--query=fast] [--title] [key:<Code> | wait:<ms> | js:<expression>] ...
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,10 +10,10 @@ import { fileURLToPath } from 'node:url';
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const args = process.argv.slice(2);
 const out = args.shift();
-if (!out) { console.error('usage: node tools/shot.mjs <out.png> [--query=fast] [steps...]'); process.exit(2); }
-let query = '';
+if (!out) { console.error('usage: node tools/shot.mjs <out.png> [--query=fast] [--title] [steps...]'); process.exit(2); }
+let query = '', titleOnly = false;
 const steps = [];
-for (const a of args) { if (a.startsWith('--query=')) query = '?' + a.slice(8); else steps.push(a); }
+for (const a of args) { if (a === '--title') titleOnly = true; else if (a.startsWith('--query=')) query = '?' + a.slice(8); else steps.push(a); }
 const page = fileURLToPath(new URL('../index.html', import.meta.url));
 const url = 'file://' + page + query;
 
@@ -58,8 +58,10 @@ async function main() {
 
   for (let i = 0; i < 50 && (await evaluate('typeof wordwell')) !== 'object'; i++) await wait(100);
   await wait(300);
-  await press('Enter');
-  for (let i = 0; i < 50 && (await evaluate('wordwell.state')) !== 'play'; i++) await wait(100);
+  if (!titleOnly) {
+    await press('Enter');
+    for (let i = 0; i < 50 && (await evaluate('wordwell.state')) !== 'play'; i++) await wait(100);
+  }
   for (const s of steps) {
     const c = s.indexOf(':');
     const kind = s.slice(0, c), arg = s.slice(c + 1);

@@ -5,8 +5,8 @@
   const L = root.WordWellLogic || require('./logic.js');
 
   const FAMILIES = ['PACE', 'WORDS', 'BLAST', 'GEAR', 'SCORE'];
-  const ITEM_CHANCE = 1 / 8; // per card on the level-up screen
-  const PACK_RAT_CHANCE = 1 / 4;
+  const ITEM_CHANCE = 1 / 5; // per card on the level-up screen
+  const PACK_RAT_CHANCE = 2 / 5;
   const JOKER_EVERY = 10;
   const FREEZE_MS = 5000;
 
