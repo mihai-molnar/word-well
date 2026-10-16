@@ -337,7 +337,7 @@
     let vowels = 0;
     for (const row of grid) {
       for (const t of row) {
-        if (!t) continue;
+        if (!t || !t.ch) continue;
         tiles++;
         if (isVowel(t.ch)) vowels++;
       }
@@ -485,6 +485,25 @@
     const cs = found.cells.slice().sort((a, b) => a.y - b.y || a.x - b.x);
     const mid = cs[Math.ceil(cs.length / 2) - 1];
     return found.dir === 'h' ? columnCells(grid, mid.x) : rowCells(grid, mid.y);
+  }
+
+  // A fresh letterless stone tile. dy/vy are there for the settle animation.
+  function stoneTile() {
+    return { ch: '', stone: true, dy: 0, vy: 0 };
+  }
+
+  // keys plus every stone tile directly beside (not diagonal to) a cell of a found word.
+  function breakStones(grid, keys, found) {
+    const out = new Set(keys);
+    for (const w of found) {
+      for (const c of w.cells) {
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const x = c.x + dx, y = c.y + dy;
+          if (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length && grid[y][x] && grid[y][x].stone) out.add(x + ',' + y);
+        }
+      }
+    }
+    return out;
   }
 
   // keys plus bomb blasts: bombs touching a found word go off, and so does any bomb a blast reaches.
@@ -895,7 +914,7 @@
   const api = {
     COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, SCRABBLE_RARE, HOOK_MIN, HOOK_MAX, HOOK_RATE,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
-    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells, rowCells, columnCells, crossCells, blastAround,
+    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells, rowCells, columnCells, crossCells, blastAround, stoneTile, breakStones,
     PieceGenerator, TargetTracker, pickFiller,
   };
   root.WordWellLogic = api;
