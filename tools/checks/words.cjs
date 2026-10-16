@@ -1,0 +1,33 @@
+const { L, dict, assert } = require('./_setup.cjs');
+const row = (...tiles) => { const g = L.emptyGrid(10, 1); tiles.forEach((t, i) => g[0][i] = t); return g; };
+const t = s => [...s].map(ch => ch === '?' ? { ch: '?', wild: true } : ch === '*' ? { ch: '', bomb: true } : { ch });
+const W = (g, r = 3) => L.findWords(g, dict, r).map(w => w.word);
+assert.deepStrictEqual(W(row(...t('heart'))), ['heart']);
+assert.deepStrictEqual(W(row(...t('hea*rt'))), [], 'a letterless tile breaks the run');
+assert.deepStrictEqual(L.findWords(row(...t('xheartz')), dict, 3), L.findWords(row(...t('xheartz')), dict, { minLen: 3 }));
+let f = L.findWords(row(...t('c?t')), dict, 3);
+assert.deepStrictEqual(f.map(w => [w.word, w.wildChs]), [['cat', ['a']]], 'ties go alphabetical (cat, cot, cut)');
+assert.ok(dict.words.has('zap'));
+assert.deepStrictEqual(W(row(...t('?ap'))), ['zap'], 'the highest-scoring fit wins');
+f = L.findWords(row({ ch: '?', wild: true }, ...t('iz')), dict, 3);
+assert.deepStrictEqual(f.map(w => [w.word, w.wildChs]), [['quiz', ['qu']]], 'a wild can be QU');
+f = L.findWords(row(...t('??t')), dict, 3);
+assert.ok(f.length === 1 && f[0].wildChs.length === 2);
+assert.deepStrictEqual(W(row(...t('???'))), [], 'three wilds in one word are not matched');
+// the dealer never builds hooks through wild or bomb tiles
+const g = L.emptyGrid(); for (let x = 0; x < 10; x++) g[19][x] = x % 2 ? { ch: '?', wild: true } : { ch: '', bomb: true };
+assert.strictEqual(L.findHooks(g, 'O', dict).length, 0);
+// speed: a full random board with two wild tiles
+const rng = L.makeRng(5), AZ = 'abcdefghijklmnoprstuvwxyz';
+const full = L.emptyGrid(); for (let y = 0; y < 20; y++) for (let x = 0; x < 10; x++) full[y][x] = { ch: AZ[Math.floor(rng() * AZ.length)] };
+full[10][4] = { ch: '?', wild: true }; full[15][7] = { ch: '?', wild: true };
+const t0 = process.hrtime.bigint(); for (let i = 0; i < 50; i++) L.findWords(full, dict, 3);
+const ms = Number(process.hrtime.bigint() - t0) / 1e6 / 50;
+assert.ok(ms < 2, 'findWords with wilds on a full board: ' + ms.toFixed(2) + ' ms');
+const timed = (g2) => { const s0 = process.hrtime.bigint(); for (let i = 0; i < 50; i++) L.findWords(g2, dict, 3); return Number(process.hrtime.bigint() - s0) / 1e6 / 50; };
+const sameRow = full.map(r => r.slice()); sameRow[10][4] = { ch: '?', wild: true }; sameRow[10][5] = { ch: '?', wild: true };
+const sameCol = full.map(r => r.slice()); sameCol[10][4] = { ch: '?', wild: true }; sameCol[11][4] = { ch: '?', wild: true };
+const msRow = timed(sameRow), msCol = timed(sameCol);
+assert.ok(msRow < 2, 'two wilds in one row: ' + msRow.toFixed(2) + ' ms');
+assert.ok(msCol < 2, 'two wilds in one column: ' + msCol.toFixed(2) + ' ms');
+console.log('words ok', ms.toFixed(2), 'ms; same row', msRow.toFixed(2), 'same col', msCol.toFixed(2));

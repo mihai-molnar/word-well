@@ -13,6 +13,7 @@
     qu: 0.5, r: 6, s: 5, t: 6, v: 1.2, w: 2, x: 0.4, y: 2, z: 0.4,
   };
   const RARE = new Set(['j', 'k', 'qu', 'v', 'x', 'z']);
+  const SCRABBLE_RARE = new Set(['j', 'k', 'qu', 'x', 'z']); // the letters SCRABBLER boosts
   const POINTS = {
     a: 1, b: 3, c: 3, d: 2, e: 1, f: 4, g: 2, h: 4, i: 1, j: 8, k: 5, l: 1, m: 3,
     n: 1, o: 1, p: 3, qu: 10, r: 1, s: 1, t: 1, u: 1, v: 4, w: 4, x: 8, y: 4, z: 10,
@@ -82,8 +83,10 @@
   // word, used to check that a piece's letters can actually sit inside real words.
   // byPrefix/bySuffix: hook-length words (no Q, which only exists as the QU tile) keyed by
   // "length|prefix" and "length|suffix", for wordsMatching.
-  function buildDictionary(text) {
+  function buildDictionary(text, shortText = '') {
     const words = new Set();
+    const short = new Set();
+    const prefixes = new Set();
     const infixes = new Set();
     const byPrefix = new Map();
     const bySuffix = new Map();
@@ -93,6 +96,7 @@
       const w = raw.toLowerCase();
       if (w.length < 3 || !/^[a-z]+$/.test(w)) continue;
       words.add(w);
+      for (let n = 1; n <= w.length; n++) prefixes.add(w.slice(0, n));
       if (w.length > maxLen) maxLen = w.length;
       for (let a = 0; a < w.length; a++) {
         for (let n = 2; n <= 4 && a + n <= w.length; n++) infixes.add(w.slice(a, a + n));
@@ -103,7 +107,15 @@
         add(bySuffix, w.length + '|' + w.slice(w.length - k), w);
       }
     }
-    return { words, infixes, maxLen, byPrefix, bySuffix };
+    // SHORT FUSE's 2-letter words; they also count as prefixes so wild tiles can complete them.
+    for (const raw of shortText.split(/\s+/)) {
+      const w = raw.toLowerCase();
+      if (w.length !== 2 || !/^[a-z]+$/.test(w)) continue;
+      short.add(w);
+      prefixes.add(w.slice(0, 1));
+      prefixes.add(w);
+    }
+    return { words, short, prefixes, infixes, maxLen, byPrefix, bySuffix };
   }
 
   // Hook-length words of exactly len letters that start with pre and end with suf (not both empty).
@@ -158,37 +170,111 @@
   // Searches every row (left to right) and column (top to bottom). Within one unbroken run of
   // tiles the longest words win and may not overlap; an across and a down word may share a tile.
   // A tile reserved for a target word (tile.tgt) only clears as part of a word containing that target.
-  function findWords(grid, dict, minLen = 3) {
+  // rules: a number (minLen) or { minLen, shortLen, mirror }. Tiles without a letter break a run;
+  // a wild tile ({ wild: true }) stands for any letter, at most two per word.
+  function findWords(grid, dict, rules = 3) {
+    const r = typeof rules === 'number' ? { minLen: rules } : rules;
     const rows = grid.length;
     const cols = grid[0].length;
     const found = [];
-    for (let y = 0; y < rows; y++) scanLine(cols, i => grid[y][i], i => ({ x: i, y }), 'h', dict, minLen, found);
-    for (let x = 0; x < cols; x++) scanLine(rows, i => grid[i][x], i => ({ x, y: i }), 'v', dict, minLen, found);
+    for (let y = 0; y < rows; y++) scanLine(cols, i => grid[y][i], i => ({ x: i, y }), 'h', dict, r, found);
+    for (let x = 0; x < cols; x++) scanLine(rows, i => grid[i][x], i => ({ x, y: i }), 'v', dict, r, found);
     return found;
   }
 
-  function scanLine(len, get, pos, dir, dict, minLen, found) {
+  function scanLine(len, get, pos, dir, dict, r, found) {
+    const live = i => { const t = get(i); return t && (t.ch || t.wild); };
     let s = 0;
     while (s < len) {
-      if (!get(s)) { s++; continue; }
+      if (!live(s)) { s++; continue; }
       let e = s;
-      while (e < len && get(e)) e++;
-      wordsInRun(s, e, get, pos, dir, dict, minLen, found);
+      while (e < len && live(e)) e++;
+      wordsInRun(s, e, get, pos, dir, dict, r, found);
       s = e;
     }
   }
 
-  function wordsInRun(s, e, get, pos, dir, dict, minLen, found) {
+  const WILD_CHS = 'abcdefghijklmnoprstuvwxyz'.split('').concat('qu');
+
+  // 'word' if str counts under the rules, 'short' if it counts only as a SHORT FUSE word, else null.
+  function wordKind(str, dict, r) {
+    if (str.length >= r.minLen && dict.words.has(str)) return 'word';
+    if (r.shortLen > 0 && str.length === r.shortLen && (dict.words.has(str) || dict.short.has(str))) return 'short';
+    return null;
+  }
+
+  // The best dictionary word the parts can spell once each '?' is replaced (null if none).
+  // Resolves left to right and stops as soon as the text so far is no word prefix.
+  function fillWilds(parts, dict, r) {
+    let best = null;
+    let bestScore = -1;
+    const used = [];
+    const go = (i, str) => {
+      if (i === parts.length) {
+        if (!wordKind(str, dict, r)) return;
+        const sc = scoreWord(str);
+        if (sc > bestScore || (sc === bestScore && str < best.str)) {
+          best = { str, wildChs: used.slice() };
+          bestScore = sc;
+        }
+        return;
+      }
+      if (parts[i] !== '?') {
+        const n = str + parts[i];
+        if (dict.prefixes.has(n)) go(i + 1, n);
+        return;
+      }
+      for (const c of WILD_CHS) {
+        const n = str + c;
+        if (!dict.prefixes.has(n)) continue;
+        used.push(c);
+        go(i + 1, n);
+        used.pop();
+      }
+    };
+    go(0, '');
+    return best;
+  }
+
+  function wordsInRun(s, e, get, pos, dir, dict, r, found) {
+    const lo = r.shortLen > 0 ? Math.min(r.minLen, r.shortLen) : r.minLen;
     const cands = [];
+    const consider = (a, b, parts, wilds, rev) => {
+      let str;
+      let wildChs;
+      if (!wilds) {
+        str = parts.join('');
+        if (!wordKind(str, dict, r)) return;
+      } else {
+        const m = fillWilds(parts, dict, r);
+        if (!m) return;
+        str = m.str;
+        wildChs = m.wildChs;
+      }
+      if (!respectsTargets(a, b, str, get)) return;
+      cands.push({ a, b, str, wildChs, rev, short: wordKind(str, dict, r) === 'short' });
+    };
     for (let a = s; a < e; a++) {
-      let str = '';
+      let size = 0;
+      let wilds = 0;
+      const parts = [];
       for (let b = a; b < e; b++) {
-        str += get(b).ch;
-        if (str.length > dict.maxLen) break;
-        if (str.length >= minLen && dict.words.has(str) && respectsTargets(a, b, str, get)) cands.push({ a, b, str });
+        const t = get(b);
+        const p = t.wild ? '?' : t.ch;
+        parts.push(p);
+        size += p.length;
+        if (t.wild) wilds++;
+        if (size > dict.maxLen || wilds > 2) break;
+        if (size + wilds < lo) continue;
+        consider(a, b, parts, wilds, false);
+        if (r.mirror) {
+          const back = parts.slice().reverse();
+          if (back.join('') !== parts.join('')) consider(a, b, back, wilds, true);
+        }
       }
     }
     if (!cands.length) return;
+    // Array#sort is stable: equal length and start keep forward before reversed.
     cands.sort((p, q) => q.str.length - p.str.length || p.a - q.a);
     const taken = [];
     for (const c of cands) {
@@ -196,7 +282,12 @@
       taken.push(c);
       const cells = [];
       for (let i = c.a; i <= c.b; i++) cells.push(pos(i));
-      found.push({ word: c.str, dir, cells });
+      if (c.rev) cells.reverse();
+      const w = { word: c.str, dir, cells };
+      if (c.wildChs) w.wildChs = c.wildChs;
+      if (c.short) w.short = true;
+      if (c.rev) w.rev = true;
+      found.push(w);
     }
   }
 
@@ -229,12 +320,16 @@
     return moves;
   }
 
-  function scoreWord(word, chain = 1) {
+  // opts: rareMult scales J K QU X Z; wildChs are letters a wild tile stood in for (they score 0).
+  function scoreWord(word, mult = 1, opts = {}) {
+    const rareMult = opts.rareMult || 1;
+    const pts = ch => (POINTS[ch] || 0) * (SCRABBLE_RARE.has(ch) ? rareMult : 1);
     let base = 0;
     for (let i = 0; i < word.length; i++) {
-      if (word[i] === 'q' && word[i + 1] === 'u') { base += POINTS.qu; i++; } else base += POINTS[word[i]] || 0;
+      if (word[i] === 'q' && word[i + 1] === 'u') { base += pts('qu'); i++; } else base += pts(word[i]);
     }
-    return base * 10 * Math.max(1, word.length - 2) * chain;
+    for (const ch of opts.wildChs || []) base -= pts(ch);
+    return Math.max(0, base) * 10 * Math.max(1, word.length - 2) * mult;
   }
 
   function vowelRatio(grid) {
@@ -296,7 +391,7 @@
     const out = [];
     while (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length) {
       const t = grid[y][x];
-      if (!t || t.tgt) break;
+      if (!t || t.tgt || t.wild || !t.ch) break;
       out.push({ x, y, ch: t.ch });
       x += dx;
       y += dy;
@@ -373,6 +468,55 @@
     return out;
   }
 
+  function rowCells(grid, y) {
+    const out = [];
+    for (let x = 0; x < grid[0].length; x++) if (grid[y][x]) out.push({ x, y });
+    return out;
+  }
+
+  function columnCells(grid, x) {
+    const out = [];
+    for (let y = 0; y < grid.length; y++) if (grid[y][x]) out.push({ x, y });
+    return out;
+  }
+
+  // The line across a found word's middle tile (the left or upper one for even lengths).
+  function crossCells(grid, found) {
+    const cs = found.cells.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+    const mid = cs[Math.ceil(cs.length / 2) - 1];
+    return found.dir === 'h' ? columnCells(grid, mid.x) : rowCells(grid, mid.y);
+  }
+
+  // keys plus bomb blasts: bombs touching a found word go off, and so does any bomb a blast reaches.
+  function blastAround(grid, keys, found, radius) {
+    const out = new Set(keys);
+    const isBomb = (x, y) => y >= 0 && y < grid.length && x >= 0 && x < grid[0].length && grid[y][x] && grid[y][x].bomb;
+    for (const w of found) {
+      for (const c of w.cells) {
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (isBomb(c.x + dx, c.y + dy)) out.add((c.x + dx) + ',' + (c.y + dy));
+        }
+      }
+    }
+    const fired = new Set();
+    for (let again = true; again;) {
+      again = false;
+      for (const k of [...out]) {
+        if (fired.has(k)) continue;
+        const [bx, by] = k.split(',').map(Number);
+        if (!isBomb(bx, by)) continue;
+        fired.add(k);
+        again = true;
+        for (let y = by - radius; y <= by + radius; y++) {
+          for (let x = bx - radius; x <= bx + radius; x++) {
+            if (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length && grid[y][x]) out.add(x + ',' + y);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   function pickIndex(weights, rng) {
     let total = 0;
     for (const w of weights) total += w;
@@ -400,7 +544,7 @@
     constructor(dict, opts = {}) {
       this.dict = dict;
       this.rng = opts.rng || Math.random;
-      this.minLen = opts.minLen || 3;
+      this.setRules({ minLen: opts.minLen || 3 });
       this.hookRate = opts.hookRate == null ? HOOK_RATE : opts.hookRate;
       this.targets = opts.targets && opts.targets.length ? opts.targets : null;
       this.targetsBy = new Map(); // "p|st" / "s|ing" -> target words starting / ending with those letters
@@ -416,6 +560,25 @@
       this.pending = null; // the peeked plain shape, lettered by the next call to next()
       this.plan = []; // a target's second piece, dealt next
       this.untilTarget = FIRST_TARGET;
+    }
+
+    // The rules in force: minLen, shortLen and mirror shape what counts as a word; rareBoost multiplies
+    // the weight of J K QU X Z. The consonant table keeps CONSONANT_WEIGHTS' key order, so default
+    // rules draw exactly as before.
+    setRules({ minLen = 3, shortLen = 0, mirror = false, rareBoost = 1 } = {}) {
+      this.rules = { minLen, shortLen, mirror, rareBoost };
+      this.minLen = minLen;
+      this.consonants = {};
+      for (const k of Object.keys(CONSONANT_WEIGHTS)) {
+        this.consonants[k] = CONSONANT_WEIGHTS[k] * (SCRABBLE_RARE.has(k) ? rareBoost : 1);
+      }
+    }
+
+    // Would this run clear on its own, with nothing else on the board?
+    clearsAlone(run) {
+      const r = this.rules;
+      if (wordKind(run, this.dict, r)) return true;
+      return !!r.mirror && wordKind(run.match(/qu|./g).reverse().join(''), this.dict, r) !== null;
     }
 
     nextType() {
@@ -458,11 +621,38 @@
       for (const d of this.plan) delete d.target;
     }
 
+    // A deal for a given shape from the live board: a hook attempt, else plain letters. Leaves the
+    // bag, the pending shape and the target schedule alone.
+    dealType(grid, type) {
+      const ratio = vowelRatio(grid);
+      if (this.rng() < this.hookRate) {
+        const hooked = this.hookPiece(type, grid, ratio);
+        if (hooked) return hooked;
+      }
+      return { type, letters: this.lettersFor(type, ratio) };
+    }
+
+    // New letters for a falling piece. Red target letters stay; the rest are re-dealt.
+    reroll(grid, piece) {
+      const fixed = [];
+      piece.cells.forEach((c, i) => { if (c.tgt) fixed.push([i, c.ch]); });
+      if (!fixed.length) return this.dealType(grid, piece.type);
+      const letters = this.fillAround(piece.type, fixed, vowelRatio(grid), piece.target);
+      return { letters: letters || piece.cells.map(c => c.ch) };
+    }
+
+    // BEACON: make the next spawn attempt a target. False when one is live, planned or already due.
+    callTarget() {
+      if (!this.targets || this.plan.length > 0 || this.untilTarget <= 0) return false;
+      this.untilTarget = 0;
+      return true;
+    }
+
     // Letters this piece so one of its straight segments, dropped at a hook spot, spells a word with
     // the board letters there. 5+ letter hooks win whenever there are any. Returns
     // { type, letters, hook: { word, rot, x, y } }, or null when no hook works.
     hookPiece(type, grid, ratio) {
-      let hooks = findHooks(grid, type, this.dict);
+      let hooks = findHooks(grid, type, this.dict).filter(h => h.len >= this.minLen);
       const long = hooks.filter(h => h.len >= 5);
       if (long.length) hooks = long;
       for (let tries = 0; tries < 8 && hooks.length; tries++) {
@@ -472,7 +662,7 @@
         const mid = word.slice(h.pre.length, h.len - h.suf.length);
         const letters = this.fillAround(type, h.seg.map((i, n) => [i, mid[n]]), ratio);
         if (letters) {
-          const deal = { type, letters, hook: { word, rot: h.rot, x: h.x, y: h.y } };
+          const deal = { type, letters, hook: { word, rot: h.rot, x: h.x, y: h.y, idx: h.seg.slice() } };
           if (this.spells(placeAt(grid, deal, deal.hook), word)) return deal;
         }
         hooks.splice(k, 1);
@@ -482,7 +672,7 @@
 
     // Does the board spell word (or a longer word containing it)?
     spells(grid, word) {
-      return findWords(grid, this.dict, this.minLen).some(w => w.word.includes(word));
+      return findWords(grid, this.dict, this.rules).some(w => w.word.includes(word));
     }
 
     // Letters for a piece whose cells in fixed ([[index, letter], ...]) are already decided; the rest
@@ -516,6 +706,7 @@
               const anchor = start ? run.slice(run.length - a) : run.slice(0, a);
               const key = (start ? 'p|' : 's|') + anchor.map(t => t.ch).join('');
               for (const word of this.targetsBy.get(key) || []) {
+                if (word.length < this.minLen) continue;
                 const rest = word.length - a - s.seg.length;
                 if (rest === 0 || (rest >= 2 && rest <= 4)) cands.push({ type, land, s, start, anchor, word, rest });
               }
@@ -582,7 +773,7 @@
       const letters = [];
       let rare = 0;
       for (let i = 0; i < 4; i++) {
-        const ch = pickWeighted(vowelSlots.includes(i) ? VOWEL_WEIGHTS : CONSONANT_WEIGHTS, this.rng);
+        const ch = pickWeighted(vowelSlots.includes(i) ? VOWEL_WEIGHTS : this.consonants, this.rng);
         if (RARE.has(ch) && ++rare > 1) return null;
         if (letters.filter(l => l === ch).length >= 2) return null;
         letters.push(ch);
@@ -602,7 +793,7 @@
       let bad = 0;
       for (const run of runsOf(createPiece(type, letters, target).cells)) {
         if (!this.readable(run)) bad += 2;
-        else if (run.length >= this.minLen && this.dict.words.has(run)) bad += 1;
+        else if (this.clearsAlone(run)) bad += 1;
       }
       return bad;
     }
@@ -619,6 +810,16 @@
       }
       return best || ['s', 't', 'e', 'a'];
     }
+  }
+
+  // A random piece cell that is neither reserved for a target nor part of a hook, for effects that
+  // rewrite one filler letter. Falls back to the first unreserved cell; -1 when every cell is reserved.
+  function pickFiller(piece, rng) {
+    const hook = piece.hookIdx || [];
+    const free = [];
+    piece.cells.forEach((c, i) => { if (!c.tgt && !c.bomb && !c.wild && !hook.includes(i)) free.push(i); });
+    if (free.length) return free[Math.floor(rng() * free.length)];
+    return piece.cells.findIndex(c => !c.tgt && !c.bomb && !c.wild);
   }
 
   // Follows the live target through a game: announce() when its first piece is dealt, placed() on
@@ -672,6 +873,18 @@
       return word;
     }
 
+    // Call before the tiles go: if a reserved tile of the live target is among keys, the target ends.
+    broken(grid, keys) {
+      const word = this.word;
+      if (!word) return null;
+      for (const k of keys) {
+        const [x, y] = k.split(',').map(Number);
+        const t = grid[y] && grid[y][x];
+        if (t && t.tgt === word) { this.end(grid); return word; }
+      }
+      return null;
+    }
+
     end(grid) {
       this.word = null;
       this.left = Infinity;
@@ -680,10 +893,10 @@
   }
 
   const api = {
-    COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, HOOK_MIN, HOOK_MAX, HOOK_RATE,
+    COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, SCRABBLE_RARE, HOOK_MIN, HOOK_MAX, HOOK_RATE,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
-    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells,
-    PieceGenerator, TargetTracker,
+    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells, rowCells, columnCells, crossCells, blastAround,
+    PieceGenerator, TargetTracker, pickFiller,
   };
   root.WordWellLogic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
