@@ -24,9 +24,8 @@
   const GREY = '#8c8c8c', DIM = '#262626', DIMRED = '#6e0a10';
 
   // ---- timing (ms) ----
-  const LOCK_DELAY = 500, CLEAR_TIME = 480, DAS = 150, ARR = 45, SOFT_ARR = 35;
+  const CLEAR_TIME = 480, DAS = 150, ARR = 45, SOFT_ARR = 35;
   const WORDS_PER_LEVEL = /[?&]fast\b/.test(location.search) ? 3 : 8; // ?fast: quick level-ups for playtests
-  const gravityInterval = lvl => Math.max(70, 900 * Math.pow(0.86, lvl - 1));
 
   const canvas = document.getElementById('screen');
   const ctx = canvas.getContext('2d');
@@ -316,6 +315,7 @@
   let clearing = null;
   let hint = { cells: new Set(), words: [] };
   let run = U.newRun(), pendingLevelUps = 0;
+  let rules = U.rules(run, minLen); // what counts as a word this run (findWords and the dealer)
   let lvl = null; // { cards, sel, t, taken } while the level-up screen is open
   let forcedCards = null; // wordwell.levelUp(cards): used by the next screen only
   let recent = [];
@@ -341,6 +341,8 @@
     popups = [];
     banner = null;
     clearing = null;
+    piece = null;
+    syncRules();
     state = 'play';
     spawn();
   }
@@ -354,6 +356,8 @@
       showBanner('TARGET ' + dealt.target.word.toUpperCase());
     }
     piece = L.createPiece(dealt.type, dealt.letters, dealt.target);
+    piece.hookIdx = dealt.hook ? dealt.hook.idx : [];
+    dealExtras(piece, dealt);
     piece.x = Math.floor((COLS - piece.n) / 2);
     piece.y = -Math.min(...piece.cells.map(c => c.y));
     dropTimer = lockTimer = lockResets = 0;
@@ -362,7 +366,19 @@
     updateHints();
   }
 
+  // Track A: JOKER's wild tile. Runs on every dealt piece, after hookIdx is set.
+  function dealExtras(piece, dealt) {}
+
   const grounded = () => L.collides(grid, piece, 0, 1);
+  const gravityMs = () => U.gravityMs(run, level);
+  const lockDelayMs = () => U.lockDelayMs(run);
+
+  // The board tile a piece cell becomes: its letter plus any target, bomb or wild mark.
+  function cellTile(c) {
+    const tile = { ch: c.ch, dy: 0, vy: 0 };
+    for (const f of ['tgt', 'bomb', 'wild']) if (c[f]) tile[f] = c[f];
+    return tile;
+  }
 
   function ghostDrop() {
     let d = 0;
@@ -379,9 +395,9 @@
     for (const c of piece.cells) {
       const y = piece.y + c.y + d;
       if (y < 0) return;
-      tmp[y][piece.x + c.x] = { ch: c.ch, tgt: c.tgt };
+      tmp[y][piece.x + c.x] = cellTile(c);
     }
-    for (const w of L.findWords(tmp, dict, minLen)) {
+    for (const w of L.findWords(tmp, dict, rules)) {
       hint.words.push(w.word);
       for (const p of w.cells) hint.cells.add(key(p.x, p.y));
     }
@@ -408,7 +424,7 @@
   }
 
   function softDrop() {
-    if (L.collides(grid, piece, 0, 1)) { lockTimer = LOCK_DELAY; return; }
+    if (L.collides(grid, piece, 0, 1)) { lockTimer = lockDelayMs(); return; }
     piece.y++;
     dropTimer = 0;
     lockTimer = 0;
@@ -434,9 +450,7 @@
     for (const c of piece.cells) {
       const y = piece.y + c.y;
       if (y < 0) { gameOver(); return; }
-      const tile = { ch: c.ch, dy: 0, vy: 0 };
-      if (c.tgt) tile.tgt = c.tgt;
-      grid[y][piece.x + c.x] = tile;
+      grid[y][piece.x + c.x] = cellTile(c);
     }
     tracker.placed(piece.target);
     piece = null;
@@ -449,7 +463,7 @@
   // settle (state 'settling'), then look again: each extra pass is a chain. Once the board is still,
   // a target whose window has run out expires and its freed letters get one more look.
   function resolve() {
-    const found = L.findWords(grid, dict, minLen);
+    const found = L.findWords(grid, dict, rules);
     if (!found.length) {
       const missed = tracker.endTurn(grid);
       if (missed) {
@@ -471,7 +485,7 @@
     const cells = new Set();
     let gained = 0;
     found.forEach((w, i) => {
-      const pts = L.scoreWord(w.word, chain) * (hits.has(w) ? L.TARGET_BONUS : 1);
+      const pts = U.wordPoints(w, chain, run, { hit: hits.has(w), minLen });
       gained += pts;
       for (const p of w.cells) cells.add(key(p.x, p.y));
       const cx = Math.round(w.cells.reduce((s, p) => s + cellPx(p.x), 0) / w.cells.length) + 5;
@@ -479,13 +493,10 @@
       // Several words at once: stagger and stack the popups so they stay readable.
       popups.push({ text: w.word.toUpperCase(), pts, x: cx, y: Math.max(WELL_Y + 24, cy - i * 20), t: -i * 140 });
       recent.unshift({ word: w.word, pts });
-      if (w.word.length > longest.length) longest = w.word;
+      if (!w.short && w.word.length > longest.length) longest = w.word;
     });
-    // A target hit blasts its whole row (across) or column (down).
-    for (const w of hits) for (const p of L.lineCells(grid, w)) cells.add(key(p.x, p.y));
     recent.length = Math.min(recent.length, 22);
-    clearing = { found, cells, gained, t: 0 };
-    state = 'clearing';
+    extraCells(found, hits, cells);
     if (hits.size) {
       showBanner('TARGET X' + L.TARGET_BONUS);
       sfx.target();
@@ -493,13 +504,38 @@
       if (chain > 1) showBanner('CHAIN X' + chain);
       sfx.word(chain, Math.max(...found.map(w => w.word.length)));
     }
+    startClear(found, cells, gained);
+  }
+
+  // Cells a resolve pass clears beyond the words themselves (adds to the cells Set).
+  function extraCells(found, hits, cells) {
+    // A target hit blasts its whole row (across) or column (down).
+    for (const w of hits) for (const p of L.lineCells(grid, w)) cells.add(key(p.x, p.y));
+    // Track B adds CROSSFIRE (the crossing line of each hit) and QUAKE (the bottom row) here.
+  }
+
+  // Every clear goes through here, word or not (DRILL and SINKHOLE too): cells is a Set of "x,y" keys.
+  // Bombs in or next to the clear go off; a live target that loses a red tile ends at once (MISSED).
+  // Nothing to clear means the board is already still, so it goes straight back to resolve().
+  function startClear(found, cells, gained) {
+    cells = L.blastAround(grid, cells, found, U.bombRadius(run));
+    const broken = tracker.broken(grid, cells);
+    if (broken) {
+      targetsSeen++;
+      showBanner('MISSED ' + broken.toUpperCase());
+      sfx.missed();
+      gen.targetEnded();
+    }
+    if (!cells.size) { resolve(); return; }
+    clearing = { found, cells, gained, t: 0 };
+    state = 'clearing';
   }
 
   function finishClear() {
     const { found, cells, gained } = clearing;
     clearing = null;
     score += gained;
-    wordsCleared += found.length;
+    wordsCleared += found.filter(w => !w.short).length; // SHORT FUSE words don't count toward levels
     for (const k of cells) {
       const [x, y] = k.split(',').map(Number);
       const px = cellPx(x) + 5, py = cellPy(y) + 5;
@@ -523,10 +559,15 @@
     state = 'settling';
   }
 
-  // Hooks for later tasks: afterLevelUp returns true when it started a clear (which spawns on its own);
-  // syncRules pushes the run's perks into the rules that depend on them.
+  // Hook for a later task: afterLevelUp returns true when it started a clear (which spawns on its own).
   function afterLevelUp() { return false; }
-  function syncRules() {}
+
+  // Push the run's perks into the word rules: findWords here, the dealer and the hints.
+  function syncRules() {
+    rules = U.rules(run, minLen);
+    if (gen) gen.setRules(rules);
+    updateHints();
+  }
 
   function openLevelUp() {
     const cards = forcedCards || U.offerCards(run, Math.random);
@@ -583,11 +624,11 @@
   function updatePlay(dt) {
     if (grounded()) {
       lockTimer += dt;
-      if (lockTimer >= LOCK_DELAY) lockPiece();
+      if (lockTimer >= lockDelayMs()) lockPiece();
       return;
     }
     dropTimer += dt;
-    if (dropTimer >= gravityInterval(level)) {
+    if (dropTimer >= gravityMs()) {
       dropTimer = 0;
       lockTimer = 0;
       piece.y++;
@@ -1201,6 +1242,8 @@
     get wordsCleared() { return wordsCleared; },
     get wordsPerLevel() { return WORDS_PER_LEVEL; },
     get hint() { return hint.words.slice(); },
+    get rules() { return rules; },
+    get timing() { return { gravity: gravityMs(), lock: lockDelayMs() }; },
     newGame,
     grant(perkId) { U.takeCard(run, { kind: 'perk', id: perkId }); syncRules(); },
     give(itemId, n = 1) { for (let i = 0; i < n; i++) U.addItem(run, itemId); },
