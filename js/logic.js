@@ -511,7 +511,7 @@
     constructor(dict, opts = {}) {
       this.dict = dict;
       this.rng = opts.rng || Math.random;
-      this.minLen = opts.minLen || 3;
+      this.setRules({ minLen: opts.minLen || 3 });
       this.hookRate = opts.hookRate == null ? HOOK_RATE : opts.hookRate;
       this.targets = opts.targets && opts.targets.length ? opts.targets : null;
       this.targetsBy = new Map(); // "p|st" / "s|ing" -> target words starting / ending with those letters
@@ -527,6 +527,23 @@
       this.pending = null; // the peeked plain shape, lettered by the next call to next()
       this.plan = []; // a target's second piece, dealt next
       this.untilTarget = FIRST_TARGET;
+    }
+
+    // The rules in force: minLen, shortLen and mirror shape what counts as a word; rareBoost multiplies
+    // the weight of J K QU X Z. The consonant table keeps CONSONANT_WEIGHTS' key order, so default
+    // rules draw exactly as before.
+    setRules({ minLen = 3, shortLen = 0, mirror = false, rareBoost = 1 } = {}) {
+      this.rules = { minLen, shortLen, mirror, rareBoost };
+      this.minLen = minLen;
+      this.consonants = {};
+      for (const k of Object.keys(CONSONANT_WEIGHTS)) {
+        this.consonants[k] = CONSONANT_WEIGHTS[k] * (SCRABBLE_RARE.has(k) ? rareBoost : 1);
+      }
+    }
+
+    // Would this run clear on its own, with nothing else on the board?
+    clearsAlone(run) {
+      return run.length >= this.minLen && this.dict.words.has(run);
     }
 
     nextType() {
@@ -573,7 +590,7 @@
     // the board letters there. 5+ letter hooks win whenever there are any. Returns
     // { type, letters, hook: { word, rot, x, y } }, or null when no hook works.
     hookPiece(type, grid, ratio) {
-      let hooks = findHooks(grid, type, this.dict);
+      let hooks = findHooks(grid, type, this.dict).filter(h => h.len >= this.minLen);
       const long = hooks.filter(h => h.len >= 5);
       if (long.length) hooks = long;
       for (let tries = 0; tries < 8 && hooks.length; tries++) {
@@ -583,7 +600,7 @@
         const mid = word.slice(h.pre.length, h.len - h.suf.length);
         const letters = this.fillAround(type, h.seg.map((i, n) => [i, mid[n]]), ratio);
         if (letters) {
-          const deal = { type, letters, hook: { word, rot: h.rot, x: h.x, y: h.y } };
+          const deal = { type, letters, hook: { word, rot: h.rot, x: h.x, y: h.y, idx: h.seg.slice() } };
           if (this.spells(placeAt(grid, deal, deal.hook), word)) return deal;
         }
         hooks.splice(k, 1);
@@ -593,7 +610,7 @@
 
     // Does the board spell word (or a longer word containing it)?
     spells(grid, word) {
-      return findWords(grid, this.dict, this.minLen).some(w => w.word.includes(word));
+      return findWords(grid, this.dict, this.rules).some(w => w.word.includes(word));
     }
 
     // Letters for a piece whose cells in fixed ([[index, letter], ...]) are already decided; the rest
@@ -627,6 +644,7 @@
               const anchor = start ? run.slice(run.length - a) : run.slice(0, a);
               const key = (start ? 'p|' : 's|') + anchor.map(t => t.ch).join('');
               for (const word of this.targetsBy.get(key) || []) {
+                if (word.length < this.minLen) continue;
                 const rest = word.length - a - s.seg.length;
                 if (rest === 0 || (rest >= 2 && rest <= 4)) cands.push({ type, land, s, start, anchor, word, rest });
               }
@@ -693,7 +711,7 @@
       const letters = [];
       let rare = 0;
       for (let i = 0; i < 4; i++) {
-        const ch = pickWeighted(vowelSlots.includes(i) ? VOWEL_WEIGHTS : CONSONANT_WEIGHTS, this.rng);
+        const ch = pickWeighted(vowelSlots.includes(i) ? VOWEL_WEIGHTS : this.consonants, this.rng);
         if (RARE.has(ch) && ++rare > 1) return null;
         if (letters.filter(l => l === ch).length >= 2) return null;
         letters.push(ch);
@@ -713,7 +731,7 @@
       let bad = 0;
       for (const run of runsOf(createPiece(type, letters, target).cells)) {
         if (!this.readable(run)) bad += 2;
-        else if (run.length >= this.minLen && this.dict.words.has(run)) bad += 1;
+        else if (this.clearsAlone(run)) bad += 1;
       }
       return bad;
     }
@@ -730,6 +748,16 @@
       }
       return best || ['s', 't', 'e', 'a'];
     }
+  }
+
+  // A random piece cell that is neither reserved for a target nor part of a hook, for effects that
+  // rewrite one filler letter. Falls back to the first unreserved cell; -1 when every cell is reserved.
+  function pickFiller(piece, rng) {
+    const hook = piece.hookIdx || [];
+    const free = [];
+    piece.cells.forEach((c, i) => { if (!c.tgt && !hook.includes(i)) free.push(i); });
+    if (free.length) return free[Math.floor(rng() * free.length)];
+    return piece.cells.findIndex(c => !c.tgt);
   }
 
   // Follows the live target through a game: announce() when its first piece is dealt, placed() on
@@ -806,7 +834,7 @@
     COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, SCRABBLE_RARE, HOOK_MIN, HOOK_MAX, HOOK_RATE,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
     findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells, rowCells, columnCells, crossCells, blastAround,
-    PieceGenerator, TargetTracker,
+    PieceGenerator, TargetTracker, pickFiller,
   };
   root.WordWellLogic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
