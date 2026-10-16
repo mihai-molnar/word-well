@@ -25,9 +25,9 @@ for (const o of offers(U.newRun(), 2000)) {
 }
 const withItem = os => os.filter(o => o.some(c => c.kind === 'item')).length / os.length;
 const base = withItem(offers(U.newRun(), 4000));
-assert.ok(base > 0.28 && base < 0.38, 'about 1-(7/8)^3 = 0.33 of offers hold an item: ' + base);
+assert.ok(base > 0.44 && base < 0.54, 'about 1-(4/5)^3 = 0.49 of offers hold an item: ' + base);
 const rat = withItem(offers(Object.assign(U.newRun(), { perks: { packrat: 1 } }), 4000));
-assert.ok(rat > 0.52 && rat < 0.64, 'PACK RAT: about 1-(3/4)^3 = 0.58: ' + rat);
+assert.ok(rat > 0.72 && rat < 0.84, 'PACK RAT: about 1-(3/5)^3 = 0.78: ' + rat);
 const allIds = os => os.flat().map(c => c.id);
 assert.ok(!allIds(offers(Object.assign(U.newRun(), { perks: { shortfuse: 1 } }), 500)).includes('purist'));
 assert.ok(!allIds(offers(Object.assign(U.newRun(), { perks: { purist: 1 } }), 500)).includes('shortfuse'));

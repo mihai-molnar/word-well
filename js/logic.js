@@ -44,6 +44,16 @@
   const HOOK_MAX = 7; // longest hook word
   const HOOK_RATE = 0.9; // share of plain pieces that try to be a hook
 
+  // Rising rows: from hazard level RISE_FROM a stone row with a few letters pushes up from the floor
+  // every riseInterval pieces. The title-screen min length shifts the hazard level down.
+  const RISE_FROM = 3; // first hazard level with rising rows
+  const RISE_START = 8; // pieces between rows at RISE_FROM
+  const RISE_STEP = 3; // hazard levels per one piece faster
+  const RISE_MIN = 3; // fewest pieces between rows
+  const HAZARD_MIN_OFFSET = 3; // hazard levels taken off per minimum word length above 3
+  // Letters on a rising row: common word-final letters and vowels, nothing rare.
+  const JUNK_WEIGHTS = { e: 12, s: 6, t: 6, a: 6, d: 4, r: 5, n: 5, o: 5, l: 4, i: 4, y: 2, h: 2, g: 2, m: 2 };
+
   function isVowel(ch) {
     return ch === 'a' || ch === 'e' || ch === 'i' || ch === 'o' || ch === 'u';
   }
@@ -492,6 +502,47 @@
     return { ch: '', stone: true, dy: 0, vy: 0 };
   }
 
+  function hazardLevel(level, minLen) {
+    return level - HAZARD_MIN_OFFSET * (minLen - 3);
+  }
+
+  // Pieces between rising rows; 0 means none yet.
+  function riseInterval(hl) {
+    if (hl < RISE_FROM) return 0;
+    return Math.max(RISE_MIN, RISE_START - Math.floor((hl - RISE_FROM) / RISE_STEP));
+  }
+
+  // Letter cells on a rising row.
+  function junkLetters(hl) {
+    return hl < 9 ? 4 : hl < 15 ? 3 : 2;
+  }
+
+  // COLS booleans, n of them true (a letter), none next to another.
+  function junkLayout(n, rng) {
+    const lay = new Array(COLS).fill(false);
+    for (let i = 0; i < n; i++) {
+      const free = [];
+      for (let x = 0; x < COLS; x++) if (!lay[x] && !lay[x - 1] && !lay[x + 1]) free.push(x);
+      lay[free[Math.floor(rng() * free.length)]] = true;
+    }
+    return lay;
+  }
+
+  // Share of plain pieces that try to be a hook: 0.9 up to level 2, 0.5 from level 15, linear between.
+  function hookRateFor(hl) {
+    if (hl <= 2) return HOOK_RATE;
+    if (hl >= 15) return 0.5;
+    return HOOK_RATE - (HOOK_RATE - 0.5) * (hl - 2) / 13;
+  }
+
+  // Push the whole grid up one row and put row on the floor. False (grid untouched) when a tile is in the top row.
+  function shiftUp(grid, row) {
+    if (grid[0].some(Boolean)) return false;
+    for (let y = 0; y < grid.length - 1; y++) grid[y] = grid[y + 1];
+    grid[grid.length - 1] = row;
+    return true;
+  }
+
   // keys plus every stone tile directly beside (not diagonal to) a cell of a found word.
   function breakStones(grid, keys, found) {
     const out = new Set(keys);
@@ -658,6 +709,30 @@
       if (!fixed.length) return this.dealType(grid, piece.type);
       const letters = this.fillAround(piece.type, fixed, vowelRatio(grid), piece.target);
       return { letters: letters || piece.cells.map(c => c.ch) };
+    }
+
+    // A rising row for the floor: stone where layout is false, a safe letter where it is true. The row
+    // fires no word once the grid has moved up under it (grid itself is not touched).
+    junkRow(grid, layout) {
+      const shifted = grid.slice(1);
+      const build = letters => layout.map((on, x) => (on ? { ch: letters[x], dy: 0, vy: 0 } : stoneTile()));
+      const draw = () => layout.map(on => (on ? pickWeighted(JUNK_WEIGHTS, this.rng) : ''));
+      let row;
+      for (let i = 0; i < 30; i++) {
+        row = build(draw());
+        if (!findWords(shifted.concat([row]), this.dict, this.rules).length) return row;
+      }
+      for (;;) {
+        const found = findWords(shifted.concat([row]), this.dict, this.rules);
+        if (!found.length) return row;
+        let changed = false;
+        for (const w of found) {
+          for (const c of w.cells) {
+            if (c.y === shifted.length && !row[c.x].stone) { row[c.x] = stoneTile(); changed = true; }
+          }
+        }
+        if (!changed) return row;
+      }
     }
 
     // BEACON: make the next spawn attempt a target. False when one is live, planned or already due.
@@ -913,6 +988,7 @@
 
   const api = {
     COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, SCRABBLE_RARE, HOOK_MIN, HOOK_MAX, HOOK_RATE,
+    RISE_FROM, RISE_START, RISE_STEP, RISE_MIN, HAZARD_MIN_OFFSET, JUNK_WEIGHTS, hazardLevel, riseInterval, junkLetters, junkLayout, hookRateFor, shiftUp,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
     findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells, rowCells, columnCells, crossCells, blastAround, stoneTile, breakStones,
     PieceGenerator, TargetTracker, pickFiller,
