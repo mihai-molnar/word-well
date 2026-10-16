@@ -6,7 +6,7 @@
   const FONT = window.WordWellFont;
   const ICONS = window.WordWellIcons;
   const U = window.WordWellUpgrades;
-  const dict = L.buildDictionary(window.WORDLIST || '');
+  const dict = L.buildDictionary(window.WORDLIST || '', window.SHORTWORDS || '');
   const TARGETS = (window.TARGETS || '').split(' ').filter(Boolean);
 
   // ---- layout, in internal pixels (the canvas is scaled up by a whole-number factor) ----
