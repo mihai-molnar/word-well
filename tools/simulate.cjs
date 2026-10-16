@@ -121,6 +121,7 @@ function playHazards(minLen, maxPieces, rng, stats) {
   const tracker = new L.TargetTracker();
   let words = 0, riseLeft = null, layout = null;
   const reached = {}; // level -> fill the first time the bot gets there
+  const gemsAt = {}; // level -> tiles cleared (gems) before the bot first got there
   const level = () => 1 + Math.floor(words / 8);
   const hl = () => L.hazardLevel(level(), minLen);
   const arm = () => { riseLeft = L.riseInterval(hl()); layout = L.junkLayout(L.junkLetters(hl()), rng); };
@@ -146,6 +147,7 @@ function playHazards(minLen, maxPieces, rng, stats) {
         for (const w of hits) for (const c of L.lineCells(grid, w)) cells.add(c.x + ',' + c.y);
       }
       cells = L.breakStones(grid, cells, found);
+      stats.tiles += cells.size; // one gem per cleared tile, as in game.js
       for (const k of cells) {
         const [x, y] = k.split(',').map(Number);
         if (grid[y][x].stone) stats.stones++;
@@ -154,9 +156,10 @@ function playHazards(minLen, maxPieces, rng, stats) {
       L.applyGravity(grid);
     }
   };
-  const end = (pieces, over) => ({ pieces, over, level: level(), reached });
+  const tiles0 = stats.tiles;
+  const end = (pieces, over) => ({ pieces, over, level: level(), reached, gemsAt });
   for (let pieces = 1; pieces <= maxPieces; pieces++) {
-    for (const lv of FILL_LEVELS) if (level() >= lv && !(lv in reached)) reached[lv] = fill();
+    for (const lv of FILL_LEVELS) if (level() >= lv && !(lv in reached)) { reached[lv] = fill(); gemsAt[lv] = stats.tiles - tiles0; }
     gen.hookRate = L.hookRateFor(hl());
     if (riseLeft === null && L.riseInterval(hl()) > 0) arm();
     if (riseLeft > 0) riseLeft--;
@@ -220,7 +223,7 @@ const HAZARD_PIECES = 1000;
 const FILL_LEVELS = [3, 5, 7]; // levels the fill is reported at
 console.log(`=== hazards: game+hazards (gen+hooks+tgts, levels, stone rows), greedy bot, ${GAMES} games x up to ${HAZARD_PIECES} pieces`);
 for (const minLen of [3, 4]) {
-  const stats = { words: 0, lens: [0, 0, 0, 0, 0, 0, 0], targets: 0, deals: 0, ns: 0, stones: 0, rows: 0 };
+  const stats = { words: 0, lens: [0, 0, 0, 0, 0, 0, 0], targets: 0, deals: 0, ns: 0, stones: 0, rows: 0, tiles: 0 };
   const runs = [];
   for (let s = 1; s <= GAMES; s++) runs.push(playHazards(minLen, HAZARD_PIECES, L.makeRng(s * 101), stats));
   const pieces = runs.reduce((n, r) => n + r.pieces, 0);
@@ -235,5 +238,6 @@ for (const minLen of [3, 4]) {
   console.log(`min ${minLen}  lost ${runs.filter(r => r.over).length}/${GAMES}  median level ${median} (lowest ${levels[0]})  survived ${(pieces / GAMES).toFixed(0).padStart(4)}`,
     ` | fill ${FILL_LEVELS.map(fillAt).join('  ')}`,
     ` | ${(stats.stones / Math.max(1, stats.rows)).toFixed(1)} stones broken/row`,
+    ` | gems/game ${(stats.tiles / GAMES).toFixed(0)} (by ${FILL_LEVELS.map(lv => { const got = runs.filter(r => lv in r.gemsAt); return `lv${lv} ${got.length ? (got.reduce((n, r) => n + r.gemsAt[lv], 0) / got.length).toFixed(0) : '-'}`; }).join(' ')})`,
     ` | words/piece ${(stats.words / pieces).toFixed(2)}  len 3`, pct(3), ' 4', pct(4), ' 5', pct(5), ' 6+', pct(6));
 }

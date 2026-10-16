@@ -1,6 +1,6 @@
 # Upgrades system: notes for the next session
 
-Status: brainstormed on 2026-10-15 and 2026-10-16, then built. Target words were built first, because they were a prerequisite for this. **The design is now `docs/superpowers/specs/2026-10-16-upgrades-design.md`.** That spec replaces the 'Decisions already made' and 'Open questions' sections below wherever they disagree. **Hazards v1 is built too:** stone rows and a stingier dealer (spec `docs/superpowers/specs/2026-10-16-stone-rows-design.md`), which replaces the hazard notes below. Gems are parked.
+Status: brainstormed on 2026-10-15 and 2026-10-16, then built. Target words were built first, because they were a prerequisite for this. **The design is now `docs/superpowers/specs/2026-10-16-upgrades-design.md`.** That spec replaces the 'Decisions already made' and 'Open questions' sections below wherever they disagree. **Hazards v1 is built too:** stone rows and a stingier dealer (spec `docs/superpowers/specs/2026-10-16-stone-rows-design.md`), which replaces the hazard notes below. **The gem shop is built too:** gems are one per cleared tile and are spent between runs (spec `docs/superpowers/specs/2026-10-16-gem-shop-design.md`), which replaces the gem notes below.
 
 ## Goal
 
