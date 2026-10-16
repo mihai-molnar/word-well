@@ -305,6 +305,11 @@
   let minLen = store.get('minLen', 3);
   let showHints = store.get('hints', true);
   let best = store.get('best', 0);
+  // The gem bank and the shop's purchases (U.loadSave). ?gems=N: a sandbox save that is never written.
+  const SANDBOX = /[?&]gems=(\d+)/.exec(location.search);
+  const LEVEL_QUERY = /[?&]level=\d+/.test(location.search); // ?level=N runs bank no gems
+  let save = SANDBOX ? { gems: +SANDBOX[1], owned: [] } : U.loadSave(store.get('shop', null));
+  const saveShop = () => { if (!SANDBOX) store.set('shop', save); };
 
   let grid = L.emptyGrid();
   let gen = null;
@@ -312,6 +317,8 @@
   let piece = null;
   let score = 0, shownScore = 0, wordsCleared = 0, level = 1, chain = 0, maxChain = 0;
   let longest = '', newBest = false;
+  let gemsRun = 0, shownGems = 0; // gems this run: the true count and the one the HUD has caught up to
+  let lastBank = { from: 0, banked: 0 }; // set at game over: the bank before, and what the run added
   let targetsHit = 0, targetsSeen = 0;
   let dropTimer = 0, lockTimer = 0, lockResets = 0;
   let freezeLeft = 0; // ms of FREEZE left
@@ -334,11 +341,13 @@
     gen = new L.PieceGenerator(dict, { minLen, targets: TARGETS });
     tracker = new L.TargetTracker();
     score = shownScore = wordsCleared = chain = maxChain = 0;
+    gemsRun = shownGems = 0;
     targetsHit = targetsSeen = 0;
     level = START_LEVEL;
     wordsCleared = (START_LEVEL - 1) * WORDS_PER_LEVEL;
     riseLeft = riseLayout = null;
-    run = U.newRun();
+    run = U.newRun(save.owned);
+    U.startKit(run, save.owned, Math.random);
     pendingLevelUps = 0;
     lvl = null;
     forcedCards = null;
@@ -619,6 +628,7 @@
     const { found, cells, gained } = clearing;
     clearing = null;
     score += gained;
+    gemsRun += cells.size; // one gem per cleared tile, whatever cleared it
     wordsCleared += found.filter(w => !w.short).length; // SHORT FUSE words don't count toward levels
     for (const k of cells) {
       const [x, y] = k.split(',').map(Number);
@@ -629,7 +639,7 @@
           life: rand(350, 800), color: Math.random() < 0.5 ? WHITE : RED, size: Math.random() < 0.3 ? 2 : 1,
         });
       }
-      for (let i = 0; i < 2; i++) gems.push({ x: px, y: py, vx: rand(-0.15, 0.15), vy: rand(-0.25, -0.08), t: 0 });
+      gems.push({ x: px, y: py, vx: rand(-0.15, 0.15), vy: rand(-0.25, -0.08), t: 0 });
       grid[y][x] = null;
     }
     for (const m of L.applyGravity(grid)) {
@@ -691,6 +701,12 @@
       newBest = true;
       store.set('best', best);
     }
+    // Bank the run's gems (the true count: gems still flying count too).
+    const banked = LEVEL_QUERY ? 0 : U.gemsBanked(gemsRun, minLen);
+    lastBank = { from: save.gems, banked };
+    save.gems += banked;
+    saveShop();
+    shownGems = gemsRun;
     shake = 4;
     sfx.over();
   }
@@ -765,6 +781,7 @@
         g.vy += (dy / d * sp - g.vy) * 0.25;
         if (d < 4 + sp * dt || g.t > 2500) {
           g.done = true;
+          shownGems = Math.min(gemsRun, shownGems + 1);
           gemFlash = 120;
           sfx.gem();
         }
@@ -1233,8 +1250,12 @@
     drawText('LV' + level, bx + 4, by + 2, WHITE);
     drawText(into + '/' + WORDS_PER_LEVEL, bx + bw - 4, by + 2, WHITE, { align: 'right' });
 
-    // Score with the red gem, top-right.
-    drawText(String(Math.floor(shownScore)), W - 18, 5, gemFlash > 0 ? RED : WHITE, { align: 'right' });
+    // Top-right: the score (white) and this run's gems (red, where the flying gems land). The title
+    // shows no run numbers; its panel shows the bank.
+    if (state !== 'title') {
+      drawText(String(Math.floor(shownScore)), RIGHT_X, 5, WHITE);
+      drawText(String(shownGems), W - 18, 5, gemFlash > 0 ? WHITE : RED, { align: 'right' });
+    }
     ctx.drawImage(gemSprite, GEM_X - 3, GEM_Y - 4);
     ctx.fillStyle = RED;
     ctx.fillRect(RIGHT_X, 15, W - 8 - RIGHT_X - 10, 1);
@@ -1348,12 +1369,13 @@
 
     drawHeader('HOW TO', RIGHT_X, 26);
     [
-      ['SPELL WORDS', WHITE], ['ACROSS → OR', WHITE], ['DOWN ↓.', WHITE], ['', WHITE],
+      ['SPELL WORDS', WHITE], ['ACROSS → OR', WHITE], ['DOWN ↓.', WHITE],
       ['WORDS BREAK,', WHITE], ['TILES ABOVE', WHITE], ['FALL IN.', WHITE], ['', WHITE],
       ['CHAINS AND', RED], ['LONG WORDS', RED], ['SCORE MORE.', RED], ['', WHITE],
       ['RED LETTERS', RED], ['ARE PART OF', WHITE], ['THE TARGET.', WHITE], ['SPELL IT FOR', WHITE], ['X3 + BLAST.', WHITE],
       ['STONES RISE.', RED], ['WORDS BREAK', WHITE], ['STONES NEXT', WHITE], ['TO THEM.', WHITE],
     ].forEach(([t, c], i) => drawText(t, RIGHT_X, 42 + i * 10, c));
+    drawText('GEMS ' + save.gems, RIGHT_X, 242, GREY);
     drawText('BEST ' + best, RIGHT_X, 252, GREY);
   }
 
@@ -1367,9 +1389,11 @@
     }
     drawRuleBanner('FALLING WORDS', 128, RED);
     if (Math.floor(time / 450) % 2 === 0) drawText('PRESS ENTER', cx, 152, WHITE, { align: 'center' });
-    drawText('MIN WORD LENGTH', cx, 176, GREY, { align: 'center' });
-    drawText('← ' + minLen + ' →', cx, 188, WHITE, { align: 'center' });
+    drawText('MIN WORD LENGTH', cx, 172, GREY, { align: 'center' });
+    drawText('← ' + minLen + ' →', cx, 184, WHITE, { align: 'center' });
+    if (minLen > 3) drawText('GEMS X' + U.GEM_MULT[minLen], cx, 194, RED, { align: 'center' });
     drawText('HINTS ' + (showHints ? 'ON' : 'OFF'), cx, 206, showHints ? RED : GREY, { align: 'center' });
+    drawText('↓ SHOP', cx, 218, GREY, { align: 'center' });
   }
 
   function drawPaused() {
@@ -1383,7 +1407,7 @@
     if (overTime < 900) return;
     const cx = WELL_X + Math.floor(WELL_W / 2);
     ctx.fillStyle = BLACK;
-    ctx.fillRect(WELL_X + 2, WELL_Y + 56, WELL_W - 4, 146);
+    ctx.fillRect(WELL_X + 2, WELL_Y + 56, WELL_W - 4, 160);
     drawText('GAME', cx, WELL_Y + 62, WHITE, { scale: 2, align: 'center' });
     drawText('OVER', cx, WELL_Y + 80, WHITE, { scale: 2, align: 'center' });
     drawRuleBanner(String(score), WELL_Y + 102, WHITE);
@@ -1396,7 +1420,8 @@
     row('CHAIN', 'X' + Math.max(1, maxChain), WELL_Y + 146);
     row('TARGETS', targetsHit + '/' + targetsSeen, WELL_Y + 158);
     row('BEST', String(best), WELL_Y + 170);
-    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER RETRY', cx, WELL_Y + 188, WHITE, { align: 'center' });
+    row('GEMS', LEVEL_QUERY ? 'NOT BANKED' : '+' + lastBank.banked + (minLen > 3 ? ' X' + U.GEM_MULT[minLen] : ''), WELL_Y + 182);
+    if (Math.floor(time / 450) % 2 === 0) drawText('ENTER SHOP', cx, WELL_Y + 200, WHITE, { align: 'center' });
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1429,7 +1454,11 @@
     get rules() { return rules; },
     get riseLeft() { return riseLeft; },
     get timing() { return { gravity: gravityMs(), lock: lockDelayMs() }; },
+    get shop() { return save; },
+    get gems() { return gemsRun; },
     newGame,
+    gameOver() { if (state === 'play') gameOver(); },
+    resetShop() { save = U.emptySave(); saveShop(); },
     grant(perkId) { U.takeCard(run, { kind: 'perk', id: perkId }); syncRules(); },
     give(itemId, n = 1) { for (let i = 0; i < n; i++) U.addItem(run, itemId); },
     // Make the next row rise right after the falling piece locks.
