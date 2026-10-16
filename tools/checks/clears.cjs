@@ -1,0 +1,34 @@
+const { L, assert, well } = require('./_setup.cjs');
+const keys = cells => cells.map(c => c.x + ',' + c.y).sort();
+let g = well([19, 0, 'abcdefghij'], [18, 4, 'xyz']);
+assert.deepStrictEqual(keys(L.rowCells(g, 18)), ['4,18', '5,18', '6,18']);
+assert.deepStrictEqual(keys(L.columnCells(g, 5)), ['5,18', '5,19']);
+const across = { dir: 'h', cells: [2, 3, 4, 5, 6, 7].map(x => ({ x, y: 19 })) };
+assert.deepStrictEqual(keys(L.crossCells(g, across)), ['4,18', '4,19'], 'middle tile of 6 is the 3rd');
+const down = { dir: 'v', cells: [{ x: 5, y: 18 }, { x: 5, y: 19 }] };
+assert.deepStrictEqual(keys(L.crossCells(g, down)), keys(L.rowCells(g, 18)), 'even length: the upper middle tile');
+// bombs
+g = well([19, 0, 'cat.......'], [18, 0, 'xxxxxxx'], [17, 0, 'yyyyyyy']);
+g[18][1] = { ch: '', bomb: true };
+const word = { word: 'cat', dir: 'h', cells: [0, 1, 2].map(x => ({ x, y: 19 })) };
+const start = () => new Set(word.cells.map(c => c.x + ',' + c.y));
+let s = L.blastAround(g, start(), [word], 1);
+assert.deepStrictEqual([...s].sort(), ['0,17', '0,18', '0,19', '1,17', '1,18', '1,19', '2,17', '2,18', '2,19'].sort());
+s = L.blastAround(g, start(), [word], 2);
+assert.ok(s.has('3,17') && s.has('3,18') && !s.has('4,18'), 'BIG BANG reaches 2 cells');
+g[18][1] = { ch: 'x' }; g[18][3] = { ch: '', bomb: true };
+assert.strictEqual(L.blastAround(g, start(), [word], 1).size, 3, 'a diagonal neighbour does not trigger');
+g[18][3] = { ch: 'x' }; g[18][2] = { ch: '', bomb: true }; g[17][3] = { ch: '', bomb: true };
+s = L.blastAround(g, start(), [word], 1);
+assert.ok(s.has('4,17') && s.has('4,18') && !s.has('5,18'), 'bomb chain: (3,17) is in the first blast and goes off too');
+const col = new Set(L.columnCells(g, 3).map(c => c.x + ',' + c.y));
+assert.ok(L.blastAround(g, col, [], 1).has('4,18'), 'a bomb in a non-word clear goes off');
+// broken targets
+g = well([19, 0, 'st........'], [18, 0, 'q']);
+const T = new L.TargetTracker();
+T.announce(g, { word: 'strong', anchor: [{ x: 0, y: 19 }, { x: 1, y: 19 }] });
+assert.strictEqual(T.broken(g, new Set(['0,18'])), null);
+assert.strictEqual(T.broken(g, new Set(['1,19'])), 'strong');
+assert.ok(T.word === null && !g[19][0].tgt, 'the target ends and its tiles are freed');
+assert.strictEqual(T.broken(g, new Set(['0,19'])), null, 'nothing live');
+console.log('clears ok');

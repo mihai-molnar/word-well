@@ -435,6 +435,55 @@
     return out;
   }
 
+  function rowCells(grid, y) {
+    const out = [];
+    for (let x = 0; x < grid[0].length; x++) if (grid[y][x]) out.push({ x, y });
+    return out;
+  }
+
+  function columnCells(grid, x) {
+    const out = [];
+    for (let y = 0; y < grid.length; y++) if (grid[y][x]) out.push({ x, y });
+    return out;
+  }
+
+  // The line across a found word's middle tile (the left or upper one for even lengths).
+  function crossCells(grid, found) {
+    const cs = found.cells.slice().sort((a, b) => a.y - b.y || a.x - b.x);
+    const mid = cs[Math.ceil(cs.length / 2) - 1];
+    return found.dir === 'h' ? columnCells(grid, mid.x) : rowCells(grid, mid.y);
+  }
+
+  // keys plus bomb blasts: bombs touching a found word go off, and so does any bomb a blast reaches.
+  function blastAround(grid, keys, found, radius) {
+    const out = new Set(keys);
+    const isBomb = (x, y) => y >= 0 && y < grid.length && x >= 0 && x < grid[0].length && grid[y][x] && grid[y][x].bomb;
+    for (const w of found) {
+      for (const c of w.cells) {
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (isBomb(c.x + dx, c.y + dy)) out.add((c.x + dx) + ',' + (c.y + dy));
+        }
+      }
+    }
+    const fired = new Set();
+    for (let again = true; again;) {
+      again = false;
+      for (const k of [...out]) {
+        if (fired.has(k)) continue;
+        const [bx, by] = k.split(',').map(Number);
+        if (!isBomb(bx, by)) continue;
+        fired.add(k);
+        again = true;
+        for (let y = by - radius; y <= by + radius; y++) {
+          for (let x = bx - radius; x <= bx + radius; x++) {
+            if (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length && grid[y][x]) out.add(x + ',' + y);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   function pickIndex(weights, rng) {
     let total = 0;
     for (const w of weights) total += w;
@@ -734,6 +783,18 @@
       return word;
     }
 
+    // Call before the tiles go: if a reserved tile of the live target is among keys, the target ends.
+    broken(grid, keys) {
+      const word = this.word;
+      if (!word) return null;
+      for (const k of keys) {
+        const [x, y] = k.split(',').map(Number);
+        const t = grid[y] && grid[y][x];
+        if (t && t.tgt === word) { this.end(grid); return word; }
+      }
+      return null;
+    }
+
     end(grid) {
       this.word = null;
       this.left = Infinity;
@@ -744,7 +805,7 @@
   const api = {
     COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, SCRABBLE_RARE, HOOK_MIN, HOOK_MAX, HOOK_RATE,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
-    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells,
+    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells, rowCells, columnCells, crossCells, blastAround,
     PieceGenerator, TargetTracker,
   };
   root.WordWellLogic = api;
