@@ -83,8 +83,9 @@
   // word, used to check that a piece's letters can actually sit inside real words.
   // byPrefix/bySuffix: hook-length words (no Q, which only exists as the QU tile) keyed by
   // "length|prefix" and "length|suffix", for wordsMatching.
-  function buildDictionary(text) {
+  function buildDictionary(text, shortText = '') {
     const words = new Set();
+    const short = new Set();
     const prefixes = new Set();
     const infixes = new Set();
     const byPrefix = new Map();
@@ -106,7 +107,15 @@
         add(bySuffix, w.length + '|' + w.slice(w.length - k), w);
       }
     }
-    return { words, prefixes, infixes, maxLen, byPrefix, bySuffix };
+    // SHORT FUSE's 2-letter words; they also count as prefixes so wild tiles can complete them.
+    for (const raw of shortText.split(/\s+/)) {
+      const w = raw.toLowerCase();
+      if (w.length !== 2 || !/^[a-z]+$/.test(w)) continue;
+      short.add(w);
+      prefixes.add(w.slice(0, 1));
+      prefixes.add(w);
+    }
+    return { words, short, prefixes, infixes, maxLen, byPrefix, bySuffix };
   }
 
   // Hook-length words of exactly len letters that start with pre and end with suf (not both empty).
@@ -187,15 +196,22 @@
 
   const WILD_CHS = 'abcdefghijklmnoprstuvwxyz'.split('').concat('qu');
 
+  // 'word' if str counts under the rules, 'short' if it counts only as a SHORT FUSE word, else null.
+  function wordKind(str, dict, r) {
+    if (str.length >= r.minLen && dict.words.has(str)) return 'word';
+    if (r.shortLen > 0 && str.length === r.shortLen && (dict.words.has(str) || dict.short.has(str))) return 'short';
+    return null;
+  }
+
   // The best dictionary word the parts can spell once each '?' is replaced (null if none).
   // Resolves left to right and stops as soon as the text so far is no word prefix.
-  function fillWilds(parts, dict, minLen) {
+  function fillWilds(parts, dict, r) {
     let best = null;
     let bestScore = -1;
     const used = [];
     const go = (i, str) => {
       if (i === parts.length) {
-        if (str.length < minLen || !dict.words.has(str)) return;
+        if (!wordKind(str, dict, r)) return;
         const sc = scoreWord(str);
         if (sc > bestScore || (sc === bestScore && str < best.str)) {
           best = { str, wildChs: used.slice() };
@@ -221,10 +237,24 @@
   }
 
   function wordsInRun(s, e, get, pos, dir, dict, r, found) {
-    const minLen = r.minLen;
+    const lo = r.shortLen > 0 ? Math.min(r.minLen, r.shortLen) : r.minLen;
     const cands = [];
+    const consider = (a, b, parts, wilds, rev) => {
+      let str;
+      let wildChs;
+      if (!wilds) {
+        str = parts.join('');
+        if (!wordKind(str, dict, r)) return;
+      } else {
+        const m = fillWilds(parts, dict, r);
+        if (!m) return;
+        str = m.str;
+        wildChs = m.wildChs;
+      }
+      if (!respectsTargets(a, b, str, get)) return;
+      cands.push({ a, b, str, wildChs, rev, short: wordKind(str, dict, r) === 'short' });
+    };
     for (let a = s; a < e; a++) {
-      let str = '';
       let size = 0;
       let wilds = 0;
       const parts = [];
@@ -235,16 +265,16 @@
         size += p.length;
         if (t.wild) wilds++;
         if (size > dict.maxLen || wilds > 2) break;
-        if (!wilds) {
-          str += p;
-          if (str.length >= minLen && dict.words.has(str) && respectsTargets(a, b, str, get)) cands.push({ a, b, str });
-        } else if (size + wilds >= minLen) {
-          const m = fillWilds(parts, dict, minLen);
-          if (m && respectsTargets(a, b, m.str, get)) cands.push({ a, b, str: m.str, wildChs: m.wildChs });
+        if (size + wilds < lo) continue;
+        consider(a, b, parts, wilds, false);
+        if (r.mirror) {
+          const back = parts.slice().reverse();
+          if (back.join('') !== parts.join('')) consider(a, b, back, wilds, true);
         }
       }
     }
     if (!cands.length) return;
+    // Array#sort is stable: equal length and start keep forward before reversed.
     cands.sort((p, q) => q.str.length - p.str.length || p.a - q.a);
     const taken = [];
     for (const c of cands) {
@@ -252,8 +282,11 @@
       taken.push(c);
       const cells = [];
       for (let i = c.a; i <= c.b; i++) cells.push(pos(i));
+      if (c.rev) cells.reverse();
       const w = { word: c.str, dir, cells };
       if (c.wildChs) w.wildChs = c.wildChs;
+      if (c.short) w.short = true;
+      if (c.rev) w.rev = true;
       found.push(w);
     }
   }
@@ -543,7 +576,9 @@
 
     // Would this run clear on its own, with nothing else on the board?
     clearsAlone(run) {
-      return run.length >= this.minLen && this.dict.words.has(run);
+      const r = this.rules;
+      if (wordKind(run, this.dict, r)) return true;
+      return !!r.mirror && wordKind(run.match(/qu|./g).reverse().join(''), this.dict, r) !== null;
     }
 
     nextType() {

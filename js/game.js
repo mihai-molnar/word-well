@@ -6,7 +6,7 @@
   const FONT = window.WordWellFont;
   const ICONS = window.WordWellIcons;
   const U = window.WordWellUpgrades;
-  const dict = L.buildDictionary(window.WORDLIST || '');
+  const dict = L.buildDictionary(window.WORDLIST || '', window.SHORTWORDS || '');
   const TARGETS = (window.TARGETS || '').split(' ').filter(Boolean);
 
   // ---- layout, in internal pixels (the canvas is scaled up by a whole-number factor) ----
@@ -370,7 +370,20 @@
   }
 
   // Track A: JOKER's wild tile. Runs on every dealt piece, after hookIdx is set.
-  function dealExtras(piece, dealt) {}
+  function dealExtras(piece, dealt) {
+    // JOKER never covers a hook or target letter; if no true filler cell exists, it comes next piece.
+    if (U.jokerDue(run) && !makeWild(piece, true)) run.joker = U.JOKER_EVERY - 1;
+  }
+
+  // One filler cell becomes a wild '?' tile; false when the piece has no usable cell.
+  function makeWild(p, strict) {
+    const i = L.pickFiller(p, Math.random);
+    if (i < 0) return false;
+    if (strict && ((p.hookIdx || []).includes(i) || p.cells[i].tgt)) return false;
+    p.cells[i].ch = '?';
+    p.cells[i].wild = true;
+    return true;
+  }
 
   const grounded = () => L.collides(grid, piece, 0, 1);
   const gravityMs = () => U.gravityMs(run, level);
@@ -856,7 +869,7 @@
   // Each fire* returns true when the item took effect. Later tasks fill in one group each.
 
   // Track A: WILD
-  function fireWild() { return false; }
+  function fireWild() { return makeWild(piece); }
 
   // Track B: BOMB, DRILL
   function fireBomb() {
