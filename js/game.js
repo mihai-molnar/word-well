@@ -378,7 +378,7 @@
   // A junk row pushes in from below. Live target tiles are plain grid tiles, so they ride up with it.
   function rise() {
     const row = gen.junkRow(grid, riseLayout);
-    if (!L.shiftUp(grid, row)) { gameOver(); return; }
+    if (!L.shiftUp(grid, row)) { showBanner('PUSHED OUT'); sfx.rise(); gameOver(); return; }
     for (const r of grid) for (const t of r) if (t) t.dy += CELL;
     riseEvery = L.riseInterval(hazLevel());
     riseLeft = riseEvery > 0 ? riseEvery : null;
@@ -1032,6 +1032,8 @@
   function drawBoard() {
     const pulse = Math.floor(time / 180) % 2 === 0;
     const wiped = state === 'over' ? Math.floor(overTime / 40) : 0;
+    // Last piece before a rise: row 0 tiles blink red, since the next row pushes them out.
+    const topWarn = riseLeft === 0 && (state === 'play' || state === 'paused') && Math.floor(time / 200) % 2 === 0;
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         const t = grid[y][x];
@@ -1040,6 +1042,7 @@
         let style = 'locked';
         if (clearing && clearing.cells.has(k)) style = Math.floor(clearing.t / 60) % 2 ? 'flashRed' : 'flash';
         else if (state === 'over' && y >= ROWS - wiped) style = 'dead';
+        else if (topWarn && y === 0) style = 'dead';
         else if (pulse && hint.cells.has(k)) style = t.tgt ? 'targetHint' : 'hint';
         else if (t.tgt) style = 'target';
         ctx.drawImage(tileSprite(tileKey(t), style), cellPx(x), cellPy(y) + Math.round(t.dy || 0));

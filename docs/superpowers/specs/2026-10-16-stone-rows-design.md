@@ -108,6 +108,7 @@ tuned with the sim (section 7), then by the owner playing.
 - **Interval** in pieces: `max(RISE_MIN, RISE_START - floor((level - RISE_FROM) / RISE_STEP))`,
   starting at 8 pieces (`RISE_START`), one shorter every 3 levels (`RISE_STEP`), never under 3
   (`RISE_MIN`). Level 3–5: 8, 6–8: 7, 9–11: 6, 12–14: 5, 15–17: 4, 18+: 3.
+  Tuned in the sim: RISE_STEP ended at 2, so the interval drops one piece every 2 levels (see CLAUDE.md).
 - **Letters per row:** 4 at levels 3–8, 3 at 9–14, 2 from 15.
 - The counter resets to the interval for the current level each time a row rises. Pure helpers in
   `logic.js` (for example `L.riseInterval(level)` and `L.junkLetters(level)`) keep this testable.
