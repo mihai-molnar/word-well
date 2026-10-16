@@ -82,4 +82,12 @@ j.perks.joker = 1; const due = Array.from({ length: 20 }, () => U.jokerDue(j));
 assert.deepStrictEqual(due.map((d, i) => d ? i + 1 : 0).filter(Boolean), [10, 20]);
 assert.deepStrictEqual([1, 2, 3, 4].map(c => U.quakeNow(R({ quake: 1 }), c)), [false, false, true, false]);
 assert.strictEqual(U.quakeNow(R({}), 3), false);
+{
+  // the item lands in each slot about equally often
+  const slots = [0, 0, 0];
+  for (const o of offers(U.newRun(), 3000, 7)) { const i = o.findIndex(c => c.kind === 'item'); if (i >= 0) slots[i]++; }
+  const tot = slots.reduce((x, y) => x + y, 0);
+  assert(tot > 300, 'enough item offers');
+  slots.forEach(n => assert(n / tot > 0.25 && n / tot < 0.42, 'item slot uniform ' + slots));
+}
 console.log('upgrades module ok');

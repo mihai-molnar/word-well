@@ -57,9 +57,9 @@
   function offerCards(run, rng) {
     const chance = has(run, 'packrat') ? PACK_RAT_CHANCE : ITEM_CHANCE;
     const cards = [null, null, null];
-    let gotItem = false;
-    for (let i = 0; i < 3 && !gotItem; i++) {
-      if (rng() < chance) { cards[i] = { kind: 'item', id: ITEM_IDS[Math.floor(rng() * ITEM_IDS.length)] }; gotItem = true; }
+    // One item per offer at most, in a uniformly random slot.
+    if (rng() < 1 - Math.pow(1 - chance, 3)) {
+      cards[Math.floor(rng() * 3)] = { kind: 'item', id: ITEM_IDS[Math.floor(rng() * ITEM_IDS.length)] };
     }
     const pool = perkPool(run);
     const owned = new Set(Object.keys(PERKS).filter(id => has(run, id)).map(id => PERKS[id].family));

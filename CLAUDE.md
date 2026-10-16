@@ -137,7 +137,7 @@ Lock → `resolve()` (a DRILL piece locks through `lockDrill` and the same clear
 
 Other mechanics: lock delay of 500ms with up to 15 move resets; DAS/ARR auto-repeat in `updateHeld`; levels every 8 words (3 with `?fast`), with gravity `900·0.86^(lvl−1)` ms (min 70), changed by PACE perks.
 
-The **hint** system (`updateHints`) runs `findWords` on a copy of the grid with the piece at its ghost position after every move. The cells involved pulse red, and the words are listed in the right panel (toggle: H).
+The **hint** system (`updateHints`) runs `findWords` on a copy of the grid with the piece at its ghost position after every move. The cells involved pulse red in the well (toggle: H); there is no word list.
 
 Rendering: sprites (glyphs per color, tiles per `style:ch`) are built once into small canvases and cached. Tile styles: `locked`, `active`, `ghost`, `ghostHint`, `hint`, `flash`, `flashRed`, `dead`, plus three for target letters, which are always red: `target`, `targetHint`, and `activeTarget` (a white square while falling).
 

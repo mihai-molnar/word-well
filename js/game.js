@@ -369,7 +369,7 @@
     updateHints();
   }
 
-  // Track A: JOKER's wild tile. Runs on every dealt piece, after hookIdx is set.
+  // Extras on a freshly dealt piece (after hookIdx is set): JOKER's wild tile.
   function dealExtras(piece, dealt) {
     // JOKER never covers a hook or target letter; if no true filler cell exists, it comes next piece.
     if (U.jokerDue(run) && !makeWild(piece, true)) run.joker = U.JOKER_EVERY - 1;
@@ -424,7 +424,7 @@
   }
 
   function afterMove() {
-    if (grounded() && lockResets < 15) { lockTimer = 0; lockResets++; }
+    if (grounded() && lockResets < 15 && freezeLeft <= 0) { lockTimer = 0; lockResets++; }
     updateHints();
   }
 
@@ -600,7 +600,7 @@
     state = 'settling';
   }
 
-  // Hook for a later task: afterLevelUp returns true when it started a clear (which spawns on its own).
+  // SINKHOLE: afterLevelUp returns true when it started a clear (which spawns on its own).
   function afterLevelUp() {
     if (!U.has(run, 'sinkhole')) return false;
     const cells = L.rowCells(grid, ROWS - 1);
@@ -798,11 +798,12 @@
         if ((action === 'start' || action === 'drop') && overTime > 900) newGame();
         break;
       case 'levelup':
+        if (lvl.taken) break;
         if (action === 'left' || action === 'right') {
           const n = lvl.cards.length;
           lvl.sel = (lvl.sel + (action === 'left' ? n - 1 : 1)) % n;
           sfx.move();
-        } else if ((action === 'drop' || action === 'start') && lvl.t >= 500 && !lvl.taken) {
+        } else if ((action === 'drop' || action === 'start') && lvl.t >= 500) {
           U.takeCard(run, lvl.cards[lvl.sel]);
           syncRules();
           lvl.taken = { t: lvl.t };
@@ -837,7 +838,9 @@
   function fireItem() {
     const id = U.selectedItem(run);
     if (!id) return;
-    if ((SWAP_ITEMS.has(id) && piece.cells.some(c => c.tgt)) || !ITEM_FIRE[id]()) {
+    // A falling drill is one letterless cell: only items that don't touch its cells work on it.
+    const onDrill = piece.type === 'drill' && !['freeze', 'beacon', 'ibeam'].includes(id);
+    if (onDrill || (SWAP_ITEMS.has(id) && piece.cells.some(c => c.tgt)) || !ITEM_FIRE[id]()) {
       sfx.no();
       itemFlash = 300;
       return;
@@ -866,12 +869,12 @@
     return false;
   }
 
-  // Each fire* returns true when the item took effect. Later tasks fill in one group each.
+  // Each fire* returns true when the item took effect.
 
-  // Track A: WILD
+  // WILD: one filler cell becomes a wild tile.
   function fireWild() { return makeWild(piece); }
 
-  // Track B: BOMB, DRILL
+  // BOMB: one filler cell becomes a bomb. DRILL: the piece becomes a single drill cell.
   function fireBomb() {
     const i = L.pickFiller(piece, Math.random);
     if (i < 0) return false;
@@ -883,7 +886,7 @@
     return swapPiece({ type: 'drill', n: 1, x: 0, y: 0, cells: [{ x: 0, y: 0, ch: '', drill: true }], hookIdx: [] });
   }
 
-  // Track D: REROLL, I-BEAM, BEACON, FREEZE
+  // REROLL: new letters, same shape. I-BEAM: swap in an I. BEACON: call a target now. FREEZE: pause gravity.
   function fireReroll() {
     const d = gen.reroll(grid, piece);
     piece.cells.forEach((c, i) => { if (c.ch && !c.bomb && !c.wild) c.ch = d.letters[i]; });
@@ -1113,6 +1116,11 @@
     lvl.cards.forEach((card, i) => drawCard(i, card, i === lvl.sel));
     ctx.fillStyle = BLACK;
     ctx.fillRect(80, 234, 160, 14);
+    if (lvl.taken) {
+      const c = lvl.cards[lvl.sel];
+      drawText((c.kind === 'item' ? U.ITEMS : U.PERKS)[c.id].name + ' TAKEN', 160, 238, RED, { align: 'center' });
+      return;
+    }
     const parts = [['\u2190 \u2192', RED], [' CHOOSE   ', WHITE], ['SPACE', RED], [' TAKE', WHITE]];
     let x = 160 - Math.floor(textWidth(parts.map(p => p[0]).join('')) / 2);
     for (const [str, col] of parts) { drawText(str, x, 238, col); x += str.length * 6; }
