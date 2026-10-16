@@ -13,6 +13,7 @@
     qu: 0.5, r: 6, s: 5, t: 6, v: 1.2, w: 2, x: 0.4, y: 2, z: 0.4,
   };
   const RARE = new Set(['j', 'k', 'qu', 'v', 'x', 'z']);
+  const SCRABBLE_RARE = new Set(['j', 'k', 'qu', 'x', 'z']); // the letters SCRABBLER boosts
   const POINTS = {
     a: 1, b: 3, c: 3, d: 2, e: 1, f: 4, g: 2, h: 4, i: 1, j: 8, k: 5, l: 1, m: 3,
     n: 1, o: 1, p: 3, qu: 10, r: 1, s: 1, t: 1, u: 1, v: 4, w: 4, x: 8, y: 4, z: 10,
@@ -229,12 +230,16 @@
     return moves;
   }
 
-  function scoreWord(word, chain = 1) {
+  // opts: rareMult scales J K QU X Z; wildChs are letters a wild tile stood in for (they score 0).
+  function scoreWord(word, mult = 1, opts = {}) {
+    const rareMult = opts.rareMult || 1;
+    const pts = ch => (POINTS[ch] || 0) * (SCRABBLE_RARE.has(ch) ? rareMult : 1);
     let base = 0;
     for (let i = 0; i < word.length; i++) {
-      if (word[i] === 'q' && word[i + 1] === 'u') { base += POINTS.qu; i++; } else base += POINTS[word[i]] || 0;
+      if (word[i] === 'q' && word[i + 1] === 'u') { base += pts('qu'); i++; } else base += pts(word[i]);
     }
-    return base * 10 * Math.max(1, word.length - 2) * chain;
+    for (const ch of opts.wildChs || []) base -= pts(ch);
+    return Math.max(0, base) * 10 * Math.max(1, word.length - 2) * mult;
   }
 
   function vowelRatio(grid) {
@@ -680,7 +685,7 @@
   }
 
   const api = {
-    COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, HOOK_MIN, HOOK_MAX, HOOK_RATE,
+    COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, SCRABBLE_RARE, HOOK_MIN, HOOK_MAX, HOOK_RATE,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
     findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt, lineCells,
     PieceGenerator, TargetTracker,
