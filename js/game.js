@@ -291,6 +291,7 @@
       take: () => [0, 7, 12].forEach((s, i) => tone(semi(523, s), 0.07, { vol: 0.05, delay: i * 0.05, type: 'square' })),
       level: () => [0, 4, 7, 12].forEach((s, i) => tone(semi(392, s), 0.12, { vol: 0.05, delay: i * 0.08, type: 'triangle' })),
       target: () => [0, 7, 12, 16, 19, 24].forEach((s, i) => tone(semi(523, s), 0.09, { vol: 0.04, delay: i * 0.05, type: 'triangle' })),
+      blast: () => { noise(0.25, 0.14); tone(160, 0.3, { vol: 0.06, slide: 0.3, type: 'sawtooth' }); },
       missed: () => [0, -5].forEach((s, i) => tone(semi(220, s), 0.12, { vol: 0.04, delay: i * 0.1 })),
       over: () => [0, -3, -7, -12].forEach((s, i) => tone(semi(330, s), 0.2, { vol: 0.05, delay: i * 0.15, slide: 0.9 })),
     };
@@ -390,6 +391,10 @@
   function updateHints() {
     hint = { cells: new Set(), words: [] };
     if (!piece || !showHints) return;
+    if (piece.type === 'drill') {
+      for (const p of L.columnCells(grid, piece.x)) hint.cells.add(key(p.x, p.y));
+      return;
+    }
     const d = ghostDrop();
     const tmp = grid.map(row => row.slice());
     for (const c of piece.cells) {
@@ -416,6 +421,7 @@
   }
 
   function rotate(dir) {
+    if (piece.type === 'drill') return;
     const r = L.tryRotate(grid, piece, dir);
     if (!r) return;
     Object.assign(piece, r);
@@ -446,7 +452,18 @@
     lockPiece();
   }
 
+  // The drill never touches the grid: it clears its whole column, itself included, for no points.
+  function lockDrill() {
+    const x = piece.x;
+    tracker.placed(null); // a drill is a placed piece: it counts toward a live target's window
+    piece = null;
+    hint = { cells: new Set(), words: [] };
+    sfx.lock();
+    startClear([], new Set(L.columnCells(grid, x).map(p => key(p.x, p.y))), 0);
+  }
+
   function lockPiece() {
+    if (piece.type === 'drill') { lockDrill(); return; }
     for (const c of piece.cells) {
       const y = piece.y + c.y;
       if (y < 0) { gameOver(); return; }
@@ -511,14 +528,23 @@
   function extraCells(found, hits, cells) {
     // A target hit blasts its whole row (across) or column (down).
     for (const w of hits) for (const p of L.lineCells(grid, w)) cells.add(key(p.x, p.y));
-    // Track B adds CROSSFIRE (the crossing line of each hit) and QUAKE (the bottom row) here.
+    if (U.has(run, 'crossfire')) for (const w of hits) for (const p of L.crossCells(grid, w)) cells.add(key(p.x, p.y));
+    // QUAKE: the bottom row goes too (chain resets every turn, so at most once per turn).
+    if (U.quakeNow(run, chain)) for (const p of L.rowCells(grid, ROWS - 1)) cells.add(key(p.x, p.y));
   }
 
   // Every clear goes through here, word or not (DRILL and SINKHOLE too): cells is a Set of "x,y" keys.
   // Bombs in or next to the clear go off; a live target that loses a red tile ends at once (MISSED).
   // Nothing to clear means the board is already still, so it goes straight back to resolve().
   function startClear(found, cells, gained) {
+    const before = cells.size;
     cells = L.blastAround(grid, cells, found, U.bombRadius(run));
+    if (cells.size > before) {
+      sfx.blast();
+      shake = Math.max(shake, 4);
+      // Banner precedence: MISSED > TARGET > BOOM > CHAIN. A TARGET banner from this pass has t = 0.
+      if (!(banner && banner.t === 0 && banner.text.startsWith('TARGET X'))) showBanner('BOOM');
+    }
     const broken = tracker.broken(grid, cells);
     if (broken) {
       targetsSeen++;
@@ -560,7 +586,13 @@
   }
 
   // Hook for a later task: afterLevelUp returns true when it started a clear (which spawns on its own).
-  function afterLevelUp() { return false; }
+  function afterLevelUp() {
+    if (!U.has(run, 'sinkhole')) return false;
+    const cells = L.rowCells(grid, ROWS - 1);
+    if (!cells.length) return false;
+    startClear([], new Set(cells.map(p => key(p.x, p.y))), 0);
+    return true;
+  }
 
   // Push the run's perks into the word rules: findWords here, the dealer and the hints.
   function syncRules() {
@@ -824,8 +856,16 @@
   function fireWild() { return false; }
 
   // Track B: BOMB, DRILL
-  function fireBomb() { return false; }
-  function fireDrill() { return false; }
+  function fireBomb() {
+    const i = L.pickFiller(piece, Math.random);
+    if (i < 0) return false;
+    piece.cells[i].ch = '';
+    piece.cells[i].bomb = true;
+    return true;
+  }
+  function fireDrill() {
+    return swapPiece({ type: 'drill', n: 1, x: 0, y: 0, cells: [{ x: 0, y: 0, ch: '', drill: true }], hookIdx: [] });
+  }
 
   // Track D: REROLL, I-BEAM, BEACON, FREEZE
   function fireReroll() { return false; }
@@ -907,7 +947,21 @@
     if (!piece || (state !== 'play' && state !== 'paused')) return;
     const pulse = Math.floor(time / 180) % 2 === 0;
     const d = ghostDrop();
-    if (d > 0) {
+    if (piece.type === 'drill') {
+      // Dotted red outline on every tile of the column it will clear, and where it lands.
+      ctx.fillStyle = RED;
+      const cells = L.columnCells(grid, piece.x).map(p => p.y);
+      if (d > 0 || !cells.includes(piece.y)) cells.push(piece.y + d);
+      for (const y of cells) {
+        const px = cellPx(piece.x), py = cellPy(y);
+        for (let i = 0; i < TILE; i += 2) {
+          ctx.fillRect(px + i, py, 1, 1);
+          ctx.fillRect(px + i, py + TILE - 1, 1, 1);
+          ctx.fillRect(px, py + i, 1, 1);
+          ctx.fillRect(px + TILE - 1, py + i, 1, 1);
+        }
+      }
+    } else if (d > 0) {
       for (const c of piece.cells) {
         const x = piece.x + c.x, y = piece.y + c.y + d;
         const style = pulse && hint.cells.has(key(x, y)) ? 'ghostHint' : 'ghost';
