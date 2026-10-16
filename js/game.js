@@ -312,6 +312,7 @@
   let longest = '', newBest = false;
   let targetsHit = 0, targetsSeen = 0;
   let dropTimer = 0, lockTimer = 0, lockResets = 0;
+  let freezeLeft = 0; // ms of FREEZE left
   let clearing = null;
   let hint = { cells: new Set(), words: [] };
   let run = U.newRun(), pendingLevelUps = 0;
@@ -333,6 +334,7 @@
     pendingLevelUps = 0;
     lvl = null;
     forcedCards = null;
+    freezeLeft = 0;
     longest = '';
     newBest = false;
     recent = [];
@@ -622,6 +624,7 @@
   }
 
   function updatePlay(dt) {
+    if (freezeLeft > 0) { freezeLeft = Math.max(0, freezeLeft - dt); return; }
     if (grounded()) {
       lockTimer += dt;
       if (lockTimer >= lockDelayMs()) lockPiece();
@@ -839,14 +842,24 @@
     return swapPiece(Object.assign(L.createPiece('I', d.letters), { hookIdx: d.hook ? d.hook.idx : [] }));
   }
   function fireBeacon() { return !tracker.word && gen.callTarget(); }
-  function fireFreeze() { return false; }
+  function fireFreeze() { freezeLeft += U.FREEZE_MS; return true; }
 
   const ITEM_FIRE = {
     bomb: fireBomb, wild: fireWild, reroll: fireReroll, drill: fireDrill,
     freeze: fireFreeze, ibeam: fireIBeam, beacon: fireBeacon,
   };
 
-  function drawFreezeTimer() {}
+  // FREEZE countdown: 5 red pips on the ITEMS header line, one filled per started second left.
+  function drawFreezeTimer() {
+    if (freezeLeft <= 0) return;
+    const n = Math.ceil(freezeLeft / 1000), y = 147;
+    ctx.fillStyle = RED;
+    for (let i = 0; i < 5; i++) {
+      const px = RIGHT_X + PANEL_W - (5 - i) * 8 + 1;
+      if (i < n) ctx.fillRect(px, y, 6, 5);
+      else { ctx.fillRect(px, y, 6, 1); ctx.fillRect(px, y + 4, 6, 1); ctx.fillRect(px, y, 1, 5); ctx.fillRect(px + 5, y, 1, 5); }
+    }
+  }
 
   // ---------------------------------------------------------------------------------------------
   // Render
