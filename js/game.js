@@ -828,9 +828,17 @@
   function fireDrill() { return false; }
 
   // Track D: REROLL, I-BEAM, BEACON, FREEZE
-  function fireReroll() { return false; }
-  function fireIBeam() { return false; }
-  function fireBeacon() { return false; }
+  function fireReroll() {
+    const d = gen.reroll(grid, piece);
+    piece.cells.forEach((c, i) => { if (c.ch && !c.bomb && !c.wild) c.ch = d.letters[i]; });
+    piece.hookIdx = d.hook ? d.hook.idx : [];
+    return true;
+  }
+  function fireIBeam() {
+    const d = gen.dealType(grid, 'I');
+    return swapPiece(Object.assign(L.createPiece('I', d.letters), { hookIdx: d.hook ? d.hook.idx : [] }));
+  }
+  function fireBeacon() { return !tracker.word && gen.callTarget(); }
   function fireFreeze() { return false; }
 
   const ITEM_FIRE = {

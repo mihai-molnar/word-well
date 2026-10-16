@@ -586,6 +586,33 @@
       for (const d of this.plan) delete d.target;
     }
 
+    // A deal for a given shape from the live board: a hook attempt, else plain letters. Leaves the
+    // bag, the pending shape and the target schedule alone.
+    dealType(grid, type) {
+      const ratio = vowelRatio(grid);
+      if (this.rng() < this.hookRate) {
+        const hooked = this.hookPiece(type, grid, ratio);
+        if (hooked) return hooked;
+      }
+      return { type, letters: this.lettersFor(type, ratio) };
+    }
+
+    // New letters for a falling piece. Red target letters stay; the rest are re-dealt.
+    reroll(grid, piece) {
+      const fixed = [];
+      piece.cells.forEach((c, i) => { if (c.tgt) fixed.push([i, c.ch]); });
+      if (!fixed.length) return this.dealType(grid, piece.type);
+      const letters = this.fillAround(piece.type, fixed, vowelRatio(grid), piece.target);
+      return { letters: letters || piece.cells.map(c => c.ch) };
+    }
+
+    // BEACON: make the next spawn attempt a target. False when one is live, planned or already due.
+    callTarget() {
+      if (!this.targets || this.plan.length > 0 || this.untilTarget <= 0) return false;
+      this.untilTarget = 0;
+      return true;
+    }
+
     // Letters this piece so one of its straight segments, dropped at a hook spot, spells a word with
     // the board letters there. 5+ letter hooks win whenever there are any. Returns
     // { type, letters, hook: { word, rot, x, y } }, or null when no hook works.
