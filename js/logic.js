@@ -48,7 +48,7 @@
   // every riseInterval pieces. The title-screen min length shifts the hazard level down.
   const RISE_FROM = 3; // first hazard level with rising rows
   const RISE_START = 8; // pieces between rows at RISE_FROM
-  const RISE_STEP = 3; // hazard levels per one piece faster
+  const RISE_STEP = 2; // hazard levels per one piece faster
   const RISE_MIN = 3; // fewest pieces between rows
   const HAZARD_MIN_OFFSET = 3; // hazard levels taken off per minimum word length above 3
   // Letters on a rising row: common word-final letters and vowels, nothing rare.

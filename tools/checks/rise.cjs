@@ -1,6 +1,6 @@
 const { L, U, dict, assert, well } = require('./_setup.cjs');
 assert.strictEqual(L.hazardLevel(10, 3), 10); assert.strictEqual(L.hazardLevel(10, 4), 7); assert.strictEqual(L.hazardLevel(10, 5), 4);
-assert.deepStrictEqual([1, 2, 3, 5, 6, 8, 9, 14, 15, 17, 18, 40].map(L.riseInterval), [0, 0, 8, 8, 7, 7, 6, 5, 4, 4, 3, 3]);
+assert.deepStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 40].map(L.riseInterval), [0, 0, 8, 8, 7, 7, 6, 6, 5, 5, 4, 4, 3, 3]);
 assert.deepStrictEqual([3, 8, 9, 14, 15, 30].map(L.junkLetters), [4, 4, 3, 3, 2, 2]);
 assert.strictEqual(L.hookRateFor(1), 0.9); assert.strictEqual(L.hookRateFor(2), 0.9);
 assert.strictEqual(L.hookRateFor(15), 0.5); assert.strictEqual(L.hookRateFor(30), 0.5);
