@@ -201,6 +201,22 @@
     return g.rows();
   })();
 
+  // KIT (the gem shop)
+  card.pouch = S16(
+    '.....r....r.....', '......r..r......', '.......rr.......', '......wwww......', '.......ww.......',
+    '.....wwwwww.....', '....w......w....', '...w........w...', '..w....rr....w..', '.w....rwrr....w.',
+    '.w...rwrrrr...w.', '.w....rrrr....w.', '.w.....rr.....w.', '..w..........w..', '...wwwwwwwwww...');
+  card.secondlook = S16(
+    '...rrrrrrrrr....', '..r.........r...', '..r........rrr..', '............r...',
+    'wwwwww....wwwwww', 'w....w....w....w', 'w....w....w.rr.w', 'w.rr.w....w.r..w',
+    'w.rr.w....w.rr.w', 'w....w....w..r.w', 'w....w....w.rr.w', 'wwwwww....wwwwww',
+    '...r.........r..', '..rrr........r..', '...r.........r..', '....rrrrrrrrr...');
+  card.earlypick = S16(
+    '..wwwwwwwwwwww..', '..w..........w..', '..w..........w..', '..w....r.....w..', '..w...rrr....w..',
+    '..wrrrrrrrrr.w..', '..w.rrrrrrr..w..', '..w..rrrrr...w..', '..w..rr.rr...w..', '..w.rr...rr..w..',
+    '..w..........w..', '..w..........w..', '..w..wwwwww..w..', '..w..........w..', '..w..........w..',
+    '..wwwwwwwwwwww..');
+
   const hud = {
     bomb: ['.......r.', '......w.r', '.....w...', '..rrrr...', '.rrrrrr..', 'rwwrrrrr.', 'rwrrrrrr.', 'rrrrrrrr.', '.rrrrrr..'],
     wild: (() => {

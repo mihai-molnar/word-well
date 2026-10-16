@@ -6,4 +6,5 @@ for (const id of [...Object.keys(U.PERKS), ...Object.keys(U.ITEMS)]) shape(I.car
 for (const id of Object.keys(U.ITEMS)) shape(I.hud[id], 9, 'hud ' + id);
 shape(I.tile.bomb, 7, 'tile bomb'); shape(I.tile.drill, 7, 'tile drill');
 shape(I.tile.stone, 7, 'tile stone');
+for (const id of ['pouch', 'secondlook', 'earlypick']) shape(I.card[id], 16, 'card ' + id);
 console.log('icons ok');

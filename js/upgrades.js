@@ -40,7 +40,31 @@
   };
   const ITEM_IDS = Object.keys(ITEMS);
 
-  const newRun = () => ({ perks: {}, items: [], sel: 0, joker: 0 });
+  const KIT = {
+    pouch: { name: 'POUCH', text: () => ['START EACH RUN', 'WITH 1 RANDOM', 'ITEM.'] },
+    pouch2: { name: 'POUCH II', text: () => ['START EACH RUN', 'WITH 2 RANDOM', 'ITEMS.'] },
+    secondlook: { name: 'SECOND LOOK', text: () => ['ONCE A RUN, V', 'ON A LEVEL-UP', 'RE-DEALS THE', 'CARDS.'] },
+    earlypick: { name: 'EARLY PICK', text: () => ['A FREE PICK', 'BEFORE THE', 'FIRST PIECE.'] },
+  };
+
+  // The shop's stock in shelf order. slot: the slot's first tier (POUCH II sells in POUCH's slot).
+  const SHOP = [
+    ['daredevil', 'PERKS', 250], ['mirror', 'PERKS', 200], ['quake', 'PERKS', 150], ['joker', 'PERKS', 200], ['scrabbler', 'PERKS', 150],
+    ['beacon', 'ITEMS', 60], ['wild', 'ITEMS', 80], ['drill', 'ITEMS', 100],
+    ['pouch', 'KIT', 200], ['pouch2', 'KIT', 500, 'pouch'], ['secondlook', 'KIT', 300], ['earlypick', 'KIT', 600],
+  ].map(([id, shelf, price, needs]) => (needs ? { id, shelf, price, slot: needs, needs } : { id, shelf, price, slot: id }));
+  const SHELVES = ['PERKS', 'ITEMS', 'KIT'].map(name => ({
+    name, slots: [...new Set(SHOP.filter(e => e.shelf === name).map(e => e.slot))],
+  }));
+  // Perks and items a fresh save can't be offered until they are bought.
+  const LOCKED = SHOP.filter(e => e.shelf !== 'KIT').map(e => e.id);
+  const unlockedItems = run => ITEM_IDS.filter(id => !run.locked.includes(id));
+
+  // owned: the save's shop ids. Without it (the sim, the checks) nothing is locked.
+  const newRun = owned => ({
+    perks: {}, items: [], sel: 0, joker: 0, redeal: false,
+    locked: owned ? LOCKED.filter(id => !owned.includes(id)) : [],
+  });
   const count = (run, id) => run.perks[id] || 0;
   const has = (run, id) => count(run, id) > 0;
 
@@ -48,7 +72,7 @@
   function perkPool(run) {
     return Object.keys(PERKS).filter(id => {
       const p = PERKS[id];
-      return count(run, id) < p.max && !(p.excludes && has(run, p.excludes));
+      return count(run, id) < p.max && !(p.excludes && has(run, p.excludes)) && !run.locked.includes(id);
     });
   }
 
@@ -56,10 +80,11 @@
   // drawn without replacement and weighted 2 for families already owned. A dry pool fills with items.
   function offerCards(run, rng) {
     const chance = has(run, 'packrat') ? PACK_RAT_CHANCE : ITEM_CHANCE;
+    const items = unlockedItems(run);
     const cards = [null, null, null];
     // One item per offer at most, in a uniformly random slot.
     if (rng() < 1 - Math.pow(1 - chance, 3)) {
-      cards[Math.floor(rng() * 3)] = { kind: 'item', id: ITEM_IDS[Math.floor(rng() * ITEM_IDS.length)] };
+      cards[Math.floor(rng() * 3)] = { kind: 'item', id: items[Math.floor(rng() * items.length)] };
     }
     const pool = perkPool(run);
     const owned = new Set(Object.keys(PERKS).filter(id => has(run, id)).map(id => PERKS[id].family));
@@ -72,7 +97,7 @@
         while (k < pool.length - 1 && (r -= w[k]) >= 0) k++;
         cards[i] = { kind: 'perk', id: pool.splice(k, 1)[0] };
       } else {
-        const free = ITEM_IDS.filter(id => !cards.some(c => c && c.id === id));
+        const free = items.filter(id => !cards.some(c => c && c.id === id));
         cards[i] = { kind: 'item', id: free[Math.floor(rng() * free.length)] };
       }
     }
@@ -139,10 +164,62 @@
   }
   const quakeNow = (run, chain) => has(run, 'quake') && chain === 3;
 
+  // ---- the gem shop: stock, the save, buying and the start kit ----
+
+  const GEM_MULT = { 3: 1, 4: 1.5, 5: 2 }; // by the title-screen MIN; PURIST doesn't count
+  const gemsBanked = (tiles, minLen) => Math.floor(tiles * (GEM_MULT[minLen] || 1));
+
+  const emptySave = () => ({ gems: 0, owned: [] });
+
+  // A save from storage, cleaned: unknown ids, repeats and tiers without their first tier are dropped.
+  function loadSave(raw) {
+    if (!raw || typeof raw !== 'object') return emptySave();
+    const gems = typeof raw.gems === 'number' && Number.isFinite(raw.gems) && raw.gems >= 0 ? Math.floor(raw.gems) : 0;
+    const owned = [];
+    for (const e of SHOP) {
+      if (Array.isArray(raw.owned) && raw.owned.includes(e.id) && (!e.needs || owned.includes(e.needs))) owned.push(e.id);
+    }
+    return { gems, owned };
+  }
+
+  function buy(save, id) {
+    const e = SHOP.find(x => x.id === id);
+    if (!e) return { ok: false, reason: 'unknown' };
+    if (save.owned.includes(id)) return { ok: false, reason: 'owned' };
+    if (e.needs && !save.owned.includes(e.needs)) return { ok: false, reason: 'needs' };
+    if (save.gems < e.price) return { ok: false, reason: 'poor' };
+    save.gems -= e.price;
+    save.owned.push(id);
+    return { ok: true };
+  }
+
+  // What a shop slot sells now: its first tier not owned, or its last tier once all are owned.
+  function slotEntry(slot, save) {
+    const tiers = SHOP.filter(e => e.slot === slot);
+    const entry = tiers.find(e => !save.owned.includes(e.id));
+    return entry ? { entry, owned: false } : { entry: tiers[tiers.length - 1], owned: true };
+  }
+
+  function shopDef(id) {
+    if (PERKS[id]) return { name: PERKS[id].name, kind: PERKS[id].family, text: PERKS[id].text };
+    if (ITEMS[id]) return { name: ITEMS[id].name, kind: 'ITEM', text: ITEMS[id].text };
+    return { name: KIT[id].name, kind: 'KIT', text: KIT[id].text };
+  }
+
+  // POUCH items (independent draws from the unlocked items) and the SECOND LOOK re-deal.
+  function startKit(run, owned, rng) {
+    const n = owned.includes('pouch2') ? 2 : owned.includes('pouch') ? 1 : 0;
+    const items = unlockedItems(run);
+    for (let i = 0; i < n; i++) addItem(run, items[Math.floor(rng() * items.length)]);
+    run.redeal = owned.includes('secondlook');
+  }
+
   const api = {
     FAMILIES, PERKS, ITEMS, ITEM_CHANCE, PACK_RAT_CHANCE, JOKER_EVERY, FREEZE_MS,
     newRun, count, has, perkPool, offerCards, takeCard, addItem, selectedItem, selectNext, useItem,
     rules, gravityMs, lockDelayMs, bombRadius, chainFactor, wordPoints, jokerDue, quakeNow,
+    SHOP, SHELVES, KIT, LOCKED, GEM_MULT, gemsBanked, emptySave, loadSave, buy, slotEntry, shopDef,
+    unlockedItems, startKit,
   };
   root.WordWellUpgrades = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
