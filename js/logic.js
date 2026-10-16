@@ -30,16 +30,9 @@
   };
   const TYPES = Object.keys(SHAPES);
   const KICKS = [[0, 0], [-1, 0], [1, 0], [-2, 0], [2, 0], [0, -1], [-1, -1], [1, -1]];
-  // Indices of each shape's bottom-row cells, left to right: where a target chunk sits. Rotating
-  // clockwise once turns that row into a column that reads top to bottom in the same order.
-  const BOTTOM_ROW = {};
-  for (const t of TYPES) {
-    const cells = SHAPES[t].cells;
-    const maxY = Math.max(...cells.map(c => c[1]));
-    BOTTOM_ROW[t] = cells.map((c, i) => i).filter(i => cells[i][1] === maxY).sort((i, j) => cells[i][0] - cells[j][0]);
-  }
 
-  // Target words: the dealer spells one over two pieces, then leaves room before the next.
+  // Target words: the dealer grows one out of board letters over one or two pieces, then leaves
+  // room before the next.
   const TARGET_WINDOW = 3; // pieces you get after the last chunk lands
   const TARGET_GAP = 2; // plain pieces between one target's window and the next target
   const FIRST_TARGET = 3; // plain pieces before the first target
@@ -389,15 +382,27 @@
   //  - at most one rare letter (J K QU V X Z) per piece and no letter three times
   //  - every across/down run inside the piece must occur inside a real word ("TRYX" never appears)
   //  - a piece never arrives already spelling a word (no free clears)
-  // With opts.targets (a word list) it also deals target words: see planTarget.
+  // Given the board, it also deals hooks (see hookPiece) and, with opts.targets (a word list),
+  // target words that grow out of board letters (see planTarget).
   class PieceGenerator {
     constructor(dict, opts = {}) {
       this.dict = dict;
       this.rng = opts.rng || Math.random;
       this.minLen = opts.minLen || 3;
+      this.hookRate = opts.hookRate == null ? HOOK_RATE : opts.hookRate;
       this.targets = opts.targets && opts.targets.length ? opts.targets : null;
+      this.targetsBy = new Map(); // "p|st" / "s|ing" -> target words starting / ending with those letters
+      for (const w of this.targets || []) {
+        for (let a = 1; a <= 3; a++) {
+          for (const k of ['p|' + w.slice(0, a), 's|' + w.slice(w.length - a)]) {
+            if (!this.targetsBy.has(k)) this.targetsBy.set(k, []);
+            this.targetsBy.get(k).push(w);
+          }
+        }
+      }
       this.bag = [];
-      this.plan = [];
+      this.pending = null; // the peeked plain shape, lettered by the next call to next()
+      this.plan = []; // a target's second piece, dealt next
       this.untilTarget = FIRST_TARGET;
     }
 
@@ -406,53 +411,140 @@
       return this.bag.pop();
     }
 
-    next(boardVowelRatio = null) {
-      if (!this.plan.length && this.targets && this.untilTarget-- <= 0) {
-        this.plan = this.planTarget(boardVowelRatio);
-        this.untilTarget = TARGET_WINDOW + TARGET_GAP;
-      }
+    // The shape of the piece the next call to next() deals: what the NEXT box shows.
+    peekType() {
+      if (this.plan.length) return this.plan[0].type;
+      if (!this.pending) this.pending = this.nextType();
+      return this.pending;
+    }
+
+    // Letters the peeked piece for the board as it is now, the moment it spawns. A due target that
+    // finds no anchor for this shape is tried again on the following piece.
+    next(grid = null) {
       if (this.plan.length) return this.plan.shift();
-      const type = this.nextType();
-      return { type, letters: this.lettersFor(type, boardVowelRatio) };
-    }
-
-    // Splits a random target word over two pieces, the word's end first: put the start to its left
-    // (across) or drop it on top after one clockwise turn (down).
-    planTarget(boardVowelRatio) {
-      const word = this.targets[Math.floor(this.rng() * this.targets.length)];
-      const sizes = [2, 3, 4].filter(b => word.length - b >= 2 && word.length - b <= 4);
-      const b = sizes[Math.floor(this.rng() * sizes.length)];
-      return [
-        this.chunkPiece(word, word.slice(b), false, boardVowelRatio),
-        this.chunkPiece(word, word.slice(0, b), true, boardVowelRatio),
-      ];
-    }
-
-    // The chunk sits in the bottom row: the end chunk flush left, the start chunk flush right, so
-    // filler letters never land between the two halves.
-    chunkPiece(word, chunk, last, boardVowelRatio) {
-      const fits = TYPES.filter(t => BOTTOM_ROW[t].length >= chunk.length);
-      const exact = fits.filter(t => BOTTOM_ROW[t].length === chunk.length);
-      const types = exact.length && this.rng() < 0.75 ? exact : fits;
-      const type = types[Math.floor(this.rng() * types.length)];
-      const row = BOTTOM_ROW[type];
-      const off = last ? row.length - chunk.length : 0;
-      const target = { word, idx: row.slice(off, off + chunk.length), last };
-      const place = letters => {
-        target.idx.forEach((cell, i) => { letters[cell] = chunk[i]; });
-        return letters;
-      };
-      let best = null;
-      let bestBad = Infinity;
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const drawn = this.drawLetters(this.vowelCount(boardVowelRatio));
-        if (!drawn) continue;
-        const letters = place(drawn);
-        const bad = this.problems(type, letters, target);
-        if (bad === 0) return { type, letters, target };
-        if (bad < bestBad) { best = letters; bestBad = bad; }
+      const type = this.peekType();
+      this.pending = null;
+      const ratio = grid ? vowelRatio(grid) : null;
+      if (this.targets && grid && this.untilTarget-- <= 0) {
+        const plan = this.planTarget(grid, ratio, type);
+        if (plan) {
+          this.plan = plan.slice(1);
+          this.untilTarget = TARGET_WINDOW + TARGET_GAP;
+          return plan[0];
+        }
       }
-      return { type, letters: best || place(['e', 'a', 't', 'o']), target };
+      if (grid && this.rng() < this.hookRate) {
+        const hooked = this.hookPiece(type, grid, ratio);
+        if (hooked) return hooked;
+      }
+      return { type, letters: this.lettersFor(type, ratio) };
+    }
+
+    // Letters this piece so one of its straight segments, dropped at a hook spot, spells a word with
+    // the board letters there. 5+ letter hooks win whenever there are any. Returns
+    // { type, letters, hook: { word, rot, x, y } }, or null when no hook works.
+    hookPiece(type, grid, ratio) {
+      let hooks = findHooks(grid, type, this.dict);
+      const long = hooks.filter(h => h.len >= 5);
+      if (long.length) hooks = long;
+      for (let tries = 0; tries < 8 && hooks.length; tries++) {
+        const k = pickIndex(hooks.map(hookWeight), this.rng);
+        const h = hooks[k];
+        const word = h.words[Math.floor(this.rng() * h.words.length)];
+        const mid = word.slice(h.pre.length, h.len - h.suf.length);
+        const letters = this.fillAround(type, h.seg.map((i, n) => [i, mid[n]]), ratio);
+        if (letters) {
+          const deal = { type, letters, hook: { word, rot: h.rot, x: h.x, y: h.y } };
+          if (this.spells(placeAt(grid, deal, deal.hook), word)) return deal;
+        }
+        hooks.splice(k, 1);
+      }
+      return null;
+    }
+
+    // Does the board spell word (or a longer word containing it)?
+    spells(grid, word) {
+      return findWords(grid, this.dict, this.minLen).some(w => w.word.includes(word));
+    }
+
+    // Letters for a piece whose cells in fixed ([[index, letter], ...]) are already decided; the rest
+    // are drawn as usual and the whole piece must pass the usual checks. Null if no draw passes.
+    fillAround(type, fixed, ratio, target) {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const letters = this.drawLetters(this.vowelCount(ratio));
+        if (!letters) continue;
+        for (const [i, ch] of fixed) letters[i] = ch;
+        if (this.problems(type, letters, target) === 0) return letters;
+      }
+      return null;
+    }
+
+    // Picks a target word that grows out of 1-3 letters already on the board (the anchor) and deals
+    // the rest over one or two pieces, each holding one straight segment of it:
+    //  - across, the anchor is the word's start (new letters to its right) or its end (to its left)
+    //  - down, new letters can only land on top, so the anchor is the word's end
+    // The first piece has the shape NEXT already showed; it touches the anchor. A second piece, when
+    // needed, picks its own shape. Every chunk is checked to land where planned and the finished word
+    // to fire. Returns the deals, or null when nothing fits yet.
+    planTarget(grid, ratio, type) {
+      const cands = [];
+      for (const land of landings(grid, type)) {
+        for (const s of segments(grid, land)) {
+          if (s.seg.length < 2) continue;
+          for (const start of [true, false]) {
+            const run = start ? s.before : s.after;
+            if ((start ? s.after : s.before).length) continue; // the far side stays open
+            for (let a = 1; a <= Math.min(3, run.length); a++) {
+              const anchor = start ? run.slice(run.length - a) : run.slice(0, a);
+              const key = (start ? 'p|' : 's|') + anchor.map(t => t.ch).join('');
+              for (const word of this.targetsBy.get(key) || []) {
+                const rest = word.length - a - s.seg.length;
+                if (rest === 0 || (rest >= 2 && rest <= 4)) cands.push({ type, land, s, start, anchor, word });
+              }
+            }
+          }
+        }
+      }
+      // Across first: stacking down onto a column is always possible, so it would crowd across out.
+      const across = shuffle(cands.filter(c => c.s.dir === 'h'), this.rng);
+      const down = shuffle(cands.filter(c => c.s.dir === 'v'), this.rng);
+      for (const c of [...across.slice(0, 20), ...down.slice(0, 20)]) {
+        const plan = this.buildTarget(grid, ratio, c);
+        if (plan) return plan;
+      }
+      return null;
+    }
+
+    buildTarget(grid, ratio, { type, land, s, start, anchor, word }) {
+      const a = anchor.length, m = s.seg.length, rest = word.length - a - m;
+      const mid = start ? word.slice(a, a + m) : word.slice(rest, rest + m);
+      const far = start ? word.slice(a + m) : word.slice(0, rest);
+      const spot = { rot: land.rot, x: land.x, y: land.y };
+      const target = { word, idx: s.seg.map(c => c.i), last: rest === 0, spot, anchor: anchor.map(t => ({ x: t.x, y: t.y })) };
+      const letters = this.fillAround(type, s.seg.map((c, k) => [c.i, mid[k]]), ratio, target);
+      if (!letters) return null;
+      const first = { type, letters, target };
+      const reserved = grid.map(row => row.slice());
+      for (const t of anchor) reserved[t.y][t.x] = { ch: t.ch, tgt: word };
+      const board = placeAt(reserved, first, spot);
+      if (!rest) return this.spells(board, word) ? [first] : null;
+      // The second chunk's segment must start right where the word continues.
+      const [dx, dy] = s.dir === 'h' ? [1, 0] : [0, 1];
+      const from = start ? s.seg[m - 1] : s.seg[0];
+      const want = start ? { x: from.x + dx, y: from.y + dy } : { x: from.x - rest * dx, y: from.y - rest * dy };
+      for (const type2 of shuffle(TYPES.slice(), this.rng)) {
+        for (const land2 of landings(board, type2)) {
+          for (const s2 of segments(board, land2)) {
+            if (s2.dir !== s.dir || s2.seg.length !== rest || s2.seg[0].x !== want.x || s2.seg[0].y !== want.y) continue;
+            const target2 = { word, idx: s2.seg.map(c => c.i), last: true, spot: { rot: land2.rot, x: land2.x, y: land2.y } };
+            const letters2 = this.fillAround(type2, s2.seg.map((c, k) => [c.i, far[k]]), ratio, target2);
+            if (!letters2) continue;
+            const second = { type: type2, letters: letters2, target: target2 };
+            if (this.spells(placeAt(board, second, target2.spot), word)) return [first, second];
+          }
+        }
+      }
+      return null;
     }
 
     vowelCount(boardVowelRatio) {
@@ -506,9 +598,10 @@
     }
   }
 
-  // Follows the live target through a game: placed() on every lock, hit() on every resolve pass and
-  // endTurn() once the board has settled. The target expires TARGET_WINDOW pieces after its last
-  // chunk lands; when it ends (hit or expired) its leftover tiles become ordinary letters.
+  // Follows the live target through a game: announce() when its first piece is dealt, placed() on
+  // every lock, hit() on every resolve pass and endTurn() once the board has settled. The target
+  // expires TARGET_WINDOW pieces after its last chunk lands; when it ends (hit or expired) its leftover
+  // tiles, anchor included, become ordinary letters.
   class TargetTracker {
     constructor(window = TARGET_WINDOW) {
       this.window = window;
@@ -517,9 +610,15 @@
       this.turn = undefined; // target info of the piece placed this turn (null: a plain piece)
     }
 
+    // The target goes live as soon as its first piece is dealt: its anchor tiles are reserved.
+    announce(grid, target) {
+      this.word = target.word;
+      this.left = Infinity;
+      for (const a of target.anchor) grid[a.y][a.x].tgt = target.word;
+    }
+
     placed(info) {
       this.turn = info || null;
-      if (info) this.word = info.word;
     }
 
     // The found words that spell the live target (they score the bonus). A hit ends the target.
@@ -536,8 +635,12 @@
       const info = this.turn;
       this.turn = undefined;
       if (info === undefined) return null;
-      if (info) {
-        if (info.last && this.word === info.word) this.left = this.window;
+      if (info && info.word === this.word) {
+        if (info.last) this.left = this.window;
+        return null;
+      }
+      if (info) { // a chunk of a target that already ended: its letters are free
+        this.end(grid);
         return null;
       }
       if (!this.word || --this.left > 0) return null;

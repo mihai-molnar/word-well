@@ -288,7 +288,6 @@
   let gen = null;
   let tracker = null; // the live target word (L.TargetTracker)
   let piece = null;
-  let queue = [];
   let score = 0, shownScore = 0, wordsCleared = 0, level = 1, chain = 0, maxChain = 0;
   let longest = '', newBest = false;
   let targetsHit = 0, targetsSeen = 0;
@@ -303,7 +302,6 @@
     grid = L.emptyGrid();
     gen = new L.PieceGenerator(dict, { minLen, targets: TARGETS });
     tracker = new L.TargetTracker();
-    queue = [gen.next(null), gen.next(null)];
     score = shownScore = wordsCleared = chain = maxChain = 0;
     targetsHit = targetsSeen = 0;
     level = 1;
@@ -319,12 +317,15 @@
     spawn();
   }
 
+  // Letters are dealt the moment a piece spawns, from the board as it is now (NEXT only shows the
+  // shape), so a hook the dealer aims at is still there. A target goes live with its first piece.
   function spawn() {
-    const next = queue.shift();
-    const dealt = gen.next(L.vowelRatio(grid));
-    queue.push(dealt);
-    if (dealt.target && !dealt.target.last) showBanner('TARGET ' + dealt.target.word.toUpperCase());
-    piece = L.createPiece(next.type, next.letters, next.target);
+    const dealt = gen.next(grid);
+    if (dealt.target && dealt.target.anchor) {
+      tracker.announce(grid, dealt.target);
+      showBanner('TARGET ' + dealt.target.word.toUpperCase());
+    }
+    piece = L.createPiece(dealt.type, dealt.letters, dealt.target);
     piece.x = Math.floor((COLS - piece.n) / 2);
     piece.y = -Math.min(...piece.cells.map(c => c.y));
     dropTimer = lockTimer = lockResets = 0;
@@ -793,8 +794,9 @@
     ctx.fillRect(x + PANEL_W - 3, y + 8, 3, 1);
   }
 
+  // NEXT shows only the shape (letters come at spawn); a target's second piece shows its red cells.
   function drawMiniPiece(next, cx, cy, style) {
-    const cells = L.createPiece(next.type, next.letters, next.target).cells;
+    const cells = L.createPiece(next.type, ['', '', '', ''], next.target).cells;
     const xs = cells.map(c => c.x), ys = cells.map(c => c.y);
     const minX = Math.min(...xs), minY = Math.min(...ys);
     const w = (Math.max(...xs) - minX + 1) * CELL - 1;
@@ -839,8 +841,7 @@
 
     // Right panel: next pieces, stats, hint.
     drawHeader('NEXT', RIGHT_X, 26);
-    if (queue[0]) drawMiniPiece(queue[0], RIGHT_X + PANEL_W / 2, 58, 'active');
-    if (queue[1]) drawMiniPiece(queue[1], RIGHT_X + PANEL_W / 2, 92, 'locked');
+    if (gen) drawMiniPiece(gen.plan[0] || { type: gen.peekType() }, RIGHT_X + PANEL_W / 2, 58, 'active');
 
     const stat = (label, value, y, color = WHITE) => {
       drawText(label, RIGHT_X, y, GREY);
@@ -857,11 +858,10 @@
     drawText('MIN ' + minLen + (sfx.muted ? '  MUTE' : ''), RIGHT_X, 252, GREY);
   }
 
-  // The live target (or the one on its way in NEXT), and how many pieces are left to spell it.
+  // The live target and how many pieces are left to spell it.
   function drawTargetPanel(y) {
     drawHeader('TARGET', RIGHT_X, y);
-    const upcoming = (piece && piece.target) || (queue.find(q => q.target) || {}).target;
-    const word = tracker.word || (upcoming && upcoming.word);
+    const word = tracker.word;
     if (!word) { drawText('-', RIGHT_X, y + 16, GREY); return; }
     const text = word.toUpperCase();
     const scale = textWidth(text, 2) <= PANEL_W ? 2 : 1;
@@ -957,7 +957,7 @@
     get grid() { return grid; },
     get piece() { return piece; },
     get score() { return score; },
-    get queue() { return queue; },
+    get gen() { return gen; },
     get tracker() { return tracker; },
     newGame,
   };
