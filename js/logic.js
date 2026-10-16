@@ -46,11 +46,11 @@
 
   // Rising rows: from hazard level RISE_FROM a stone row with a few letters pushes up from the floor
   // every riseInterval pieces. The title-screen min length shifts the hazard level down.
-  const RISE_FROM = 3; // first hazard level with rising rows
-  const RISE_START = 8; // pieces between rows at RISE_FROM
-  const RISE_STEP = 2; // hazard levels per one piece faster
-  const RISE_MIN = 3; // fewest pieces between rows
-  const HAZARD_MIN_OFFSET = 3; // hazard levels taken off per minimum word length above 3
+  const RISE_FROM = 2; // first hazard level with rising rows: right after the first level-up
+  const RISE_START = 6; // pieces between rows at RISE_FROM
+  const RISE_STEP = 1; // hazard levels per one piece faster
+  const RISE_MIN = 1; // fewest pieces between rows: a row after every piece
+  const HAZARD_MIN_OFFSET = 1; // hazard levels taken off per minimum word length above 3
   // Letters on a rising row: common word-final letters and vowels, nothing rare.
   const JUNK_WEIGHTS = { e: 12, s: 6, t: 6, a: 6, d: 4, r: 5, n: 5, o: 5, l: 4, i: 4, y: 2, h: 2, g: 2, m: 2 };
 

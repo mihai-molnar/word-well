@@ -156,7 +156,7 @@ function playHazards(minLen, maxPieces, rng, stats) {
   };
   const end = (pieces, over) => ({ pieces, over, level: level(), reached });
   for (let pieces = 1; pieces <= maxPieces; pieces++) {
-    for (const lv of [10, 15, 20]) if (level() >= lv && !(lv in reached)) reached[lv] = fill();
+    for (const lv of FILL_LEVELS) if (level() >= lv && !(lv in reached)) reached[lv] = fill();
     gen.hookRate = L.hookRateFor(hl());
     if (riseLeft === null && L.riseInterval(hl()) > 0) arm();
     if (riseLeft > 0) riseLeft--;
@@ -217,6 +217,7 @@ for (const minLen of ONLY_HAZARDS ? [] : [3, 4]) {
 // The full game with hazards (`node tools/simulate.cjs hazards` runs only this). Level is where each game
 // ended; fill is tiles/200 the first time a game reaches the level, over the games that got there.
 const HAZARD_PIECES = 1000;
+const FILL_LEVELS = [3, 5, 7]; // levels the fill is reported at
 console.log(`=== hazards: game+hazards (gen+hooks+tgts, levels, stone rows), greedy bot, ${GAMES} games x up to ${HAZARD_PIECES} pieces`);
 for (const minLen of [3, 4]) {
   const stats = { words: 0, lens: [0, 0, 0, 0, 0, 0, 0], targets: 0, deals: 0, ns: 0, stones: 0, rows: 0 };
@@ -232,7 +233,7 @@ for (const minLen of [3, 4]) {
   };
   const pct = n => (stats.lens[n] / stats.words * 100).toFixed(0).padStart(3) + '%';
   console.log(`min ${minLen}  lost ${runs.filter(r => r.over).length}/${GAMES}  median level ${median} (lowest ${levels[0]})  survived ${(pieces / GAMES).toFixed(0).padStart(4)}`,
-    ` | fill ${fillAt(10)}  ${fillAt(15)}  ${fillAt(20)}`,
+    ` | fill ${FILL_LEVELS.map(fillAt).join('  ')}`,
     ` | ${(stats.stones / Math.max(1, stats.rows)).toFixed(1)} stones broken/row`,
     ` | words/piece ${(stats.words / pieces).toFixed(2)}  len 3`, pct(3), ' 4', pct(4), ' 5', pct(5), ' 6+', pct(6));
 }

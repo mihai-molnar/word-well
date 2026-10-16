@@ -3,6 +3,13 @@
 Status: agreed with the owner on 2026-10-16. They asked for it to be specced, planned and built
 without further check-ins unless something blocks.
 
+**Revised 2026-10-16 after the owner's first playtest.** Still too easy. The game is a roguelike
+played in short bursts, and dying is part of the loop. The "half full at level 15" goal below
+was a misunderstanding: drop it. The new schedule: rows start right after the first level-up
+(`RISE_FROM` 2), 6 pieces apart, one piece sooner each level, down to a row after every piece
+(`RISE_MIN` 1, from level 7). `HAZARD_MIN_OFFSET` is 1. In the sim the bot now dies around level
+10 at MIN 3. CLAUDE.md has the current numbers; where this document disagrees, the revision wins.
+
 ## Why
 
 After playtesting the upgrades, the owner reached level 30 with an almost empty well. Nearly every
