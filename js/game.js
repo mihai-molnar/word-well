@@ -367,7 +367,18 @@
   }
 
   // Track A: JOKER's wild tile. Runs on every dealt piece, after hookIdx is set.
-  function dealExtras(piece, dealt) {}
+  function dealExtras(piece, dealt) {
+    if (U.jokerDue(run)) makeWild(piece);
+  }
+
+  // One filler cell becomes a wild '?' tile; false when the piece has no usable cell.
+  function makeWild(p) {
+    const i = L.pickFiller(p, Math.random);
+    if (i < 0) return false;
+    p.cells[i].ch = '?';
+    p.cells[i].wild = true;
+    return true;
+  }
 
   const grounded = () => L.collides(grid, piece, 0, 1);
   const gravityMs = () => U.gravityMs(run, level);
@@ -821,7 +832,7 @@
   // Each fire* returns true when the item took effect. Later tasks fill in one group each.
 
   // Track A: WILD
-  function fireWild() { return false; }
+  function fireWild() { return makeWild(piece); }
 
   // Track B: BOMB, DRILL
   function fireBomb() { return false; }

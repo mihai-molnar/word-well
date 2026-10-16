@@ -23,3 +23,5 @@ let selfClears = 0;
 for (let i = 0; i < 2000; i++) { const d = gen.next(null); if (L.runsOf(L.createPiece(d.type, d.letters).cells).some(r => gen.clearsAlone(r))) selfClears++; }
 assert.ok(selfClears / 2000 < 0.05, 'self-clearing pieces under SHORT FUSE: ' + selfClears);
 console.log('mirror/short ok', selfClears);
+// MIRROR reverses by tile: the QU tile stays whole ('tiqu' backwards is 'quit')
+gen.setRules({ minLen: 3, mirror: true }); assert.ok(gen.clearsAlone('tiqu'), 'QU-aware mirror reversal');

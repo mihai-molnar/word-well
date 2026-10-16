@@ -578,7 +578,7 @@
     clearsAlone(run) {
       const r = this.rules;
       if (wordKind(run, this.dict, r)) return true;
-      return !!r.mirror && wordKind([...run].reverse().join(''), this.dict, r) !== null;
+      return !!r.mirror && wordKind(run.match(/qu|./g).reverse().join(''), this.dict, r) !== null;
     }
 
     nextType() {
