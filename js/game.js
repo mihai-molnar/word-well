@@ -351,7 +351,8 @@
     U.startKit(run, save.owned, Math.random);
     pendingLevelUps = 0;
     lvl = null;
-    forcedCards = null;
+    const early = save.owned.includes('earlypick'); // EARLY PICK: a pick-one screen before the first piece
+    if (!early) forcedCards = null;
     freezeLeft = 0;
     longest = '';
     newBest = false;
@@ -365,7 +366,7 @@
     syncRules();
     state = 'play';
     syncHazards();
-    spawn();
+    if (early) { pendingLevelUps = 1; openLevelUp(true); } else spawn();
   }
 
   const hazLevel = () => L.hazardLevel(level, minLen);
@@ -670,10 +671,11 @@
     updateHints();
   }
 
-  function openLevelUp() {
+  // early: the EARLY PICK screen before a run's first piece (same rules, its own header).
+  function openLevelUp(early = false) {
     const cards = forcedCards || U.offerCards(run, Math.random);
     forcedCards = null;
-    lvl = { cards, sel: 0, t: 0, taken: null };
+    lvl = { cards, sel: 0, t: 0, taken: null, early };
     state = 'levelup';
     sfx.level();
   }
@@ -917,6 +919,10 @@
           const n = lvl.cards.length;
           lvl.sel = (lvl.sel + (action === 'left' ? n - 1 : 1)) % n;
           sfx.move();
+        } else if (action === 'swap' && run.redeal) { // SECOND LOOK: once per run
+          lvl.cards = U.offerCards(run, Math.random);
+          run.redeal = false;
+          sfx.item();
         } else if ((action === 'drop' || action === 'start') && lvl.t >= 500) {
           U.takeCard(run, lvl.cards[lvl.sel]);
           syncRules();
@@ -1250,26 +1256,29 @@
 
   // A big white title with a red drop shadow, in a black box below the HUD strip.
   function drawScreenTitle(text) {
+    const w = Math.max(120, textWidth(text, 2) + 8);
     ctx.fillStyle = BLACK;
-    ctx.fillRect(100, 22, 120, 34);
+    ctx.fillRect(160 - w / 2, 22, w, 34);
     drawText(text, 160, 28, RED, { scale: 2, align: 'center' });
     drawText(text, 160, 26, WHITE, { scale: 2, align: 'center', outline: BLACK });
   }
 
   function drawLevelUp() {
     drawDither();
-    drawScreenTitle('LEVEL UP');
+    drawScreenTitle(lvl.early ? 'EARLY PICK' : 'LEVEL UP');
     drawRuleBanner('PICK ONE', 48, WHITE, 8, W - 8);
     lvl.cards.forEach((card, i) => drawCard(i, card, i === lvl.sel));
+    const parts = [['\u2190 \u2192', RED], [' CHOOSE   ', WHITE], ['SPACE', RED], [' TAKE', WHITE]];
+    if (run.redeal) parts.push(['   V', RED], [' REDEAL', WHITE]);
+    const tw = textWidth(parts.map(p => p[0]).join(''));
     ctx.fillStyle = BLACK;
-    ctx.fillRect(80, 234, 160, 14);
+    ctx.fillRect(Math.min(80, 154 - Math.floor(tw / 2)), 234, Math.max(160, tw + 12), 14);
     if (lvl.taken) {
       const c = lvl.cards[lvl.sel];
       drawText((c.kind === 'item' ? U.ITEMS : U.PERKS)[c.id].name + ' TAKEN', 160, 238, RED, { align: 'center' });
       return;
     }
-    const parts = [['\u2190 \u2192', RED], [' CHOOSE   ', WHITE], ['SPACE', RED], [' TAKE', WHITE]];
-    let x = 160 - Math.floor(textWidth(parts.map(p => p[0]).join('')) / 2);
+    let x = 160 - Math.floor(tw / 2);
     for (const [str, col] of parts) { drawText(str, x, 238, col); x += str.length * 6; }
   }
 
@@ -1595,6 +1604,7 @@
     get riseLeft() { return riseLeft; },
     get timing() { return { gravity: gravityMs(), lock: lockDelayMs() }; },
     get shop() { return save; },
+    get lvl() { return lvl; },
     get gems() { return gemsRun; },
     newGame,
     openShop() { openShop(false); },
