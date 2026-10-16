@@ -278,6 +278,111 @@
     return runs;
   }
 
+  // Every resting spot of a piece type dropped straight down, in rotation 0 (spawn) or 1 (one
+  // clockwise turn): the two turns that keep a row's reading order. Cells keep their index i.
+  function landings(grid, type) {
+    const n = SHAPES[type].n;
+    const out = [];
+    let cells = SHAPES[type].cells.map(([x, y], i) => ({ x, y, i }));
+    for (let rot = 0; rot < 2; rot++) {
+      for (let x = -n; x < grid[0].length; x++) {
+        const p = { x, y: -n, cells };
+        if (collides(grid, p, 0, 0)) continue;
+        while (!collides(grid, p, 0, 1)) p.y++;
+        const at = cells.map(c => ({ i: c.i, x: p.x + c.x, y: p.y + c.y }));
+        if (at.some(c => c.y < 0)) continue;
+        out.push({ rot, x, y: p.y, cells: at });
+      }
+      cells = rotateCells(cells, n, 1);
+    }
+    return out;
+  }
+
+  // Unreserved board letters from (x, y) onwards in steps of (dx, dy), up to the first gap.
+  function boardRun(grid, x, y, dx, dy) {
+    const out = [];
+    while (y >= 0 && y < grid.length && x >= 0 && x < grid[0].length) {
+      const t = grid[y][x];
+      if (!t || t.tgt) break;
+      out.push({ x, y, ch: t.ch });
+      x += dx;
+      y += dy;
+    }
+    return out;
+  }
+
+  // The straight lines a landed piece makes: in each row and column it touches, its cells there
+  // (always one unbroken segment, in reading order) and the board letters directly before and after.
+  function segments(grid, land) {
+    const at = new Map(land.cells.map(c => [c.x + ',' + c.y, c]));
+    const out = [];
+    for (const [dir, dx, dy] of [['h', 1, 0], ['v', 0, 1]]) {
+      for (const c of land.cells) {
+        if (at.has((c.x - dx) + ',' + (c.y - dy))) continue;
+        const seg = [];
+        for (let x = c.x, y = c.y; at.has(x + ',' + y); x += dx, y += dy) seg.push(at.get(x + ',' + y));
+        const end = seg[seg.length - 1];
+        out.push({
+          dir, seg,
+          before: boardRun(grid, c.x - dx, c.y - dy, -dx, -dy).reverse(),
+          after: boardRun(grid, end.x + dx, end.y + dy, dx, dy),
+        });
+      }
+    }
+    return out;
+  }
+
+  // Hooks for a piece type: spots where one straight segment of the piece, with board letters before
+  // and/or after it, would spell a HOOK_MIN..HOOK_MAX letter word. Each hook lists every word that fits;
+  // seg holds the piece's cell indices in reading order, pre/suf the board letters used.
+  function findHooks(grid, type, dict) {
+    const hooks = [];
+    for (const land of landings(grid, type)) {
+      const at = new Set(land.cells.map(c => c.x + ',' + c.y));
+      const holes = land.cells.filter(c => c.y + 1 < grid.length && !grid[c.y + 1][c.x] && !at.has(c.x + ',' + (c.y + 1))).length;
+      for (const s of segments(grid, land)) {
+        const B = s.before.length, A = s.after.length, m = s.seg.length;
+        for (let i = 0; i <= B; i++) {
+          for (let j = 0; j <= A; j++) {
+            const len = i + m + j;
+            if (i + j === 0 || len < HOOK_MIN || len > HOOK_MAX) continue;
+            const pre = s.before.slice(B - i).map(t => t.ch).join('');
+            const suf = s.after.slice(0, j).map(t => t.ch).join('');
+            const words = wordsMatching(dict, len, pre, suf);
+            if (words.length) {
+              hooks.push({ rot: land.rot, x: land.x, y: land.y, dir: s.dir, pre, suf, len, board: i + j, holes, seg: s.seg.map(c => c.i), words });
+            }
+          }
+        }
+      }
+    }
+    return hooks;
+  }
+
+  // A copy of the grid with a dealt piece dropped at spot {rot (0|1), x, y}.
+  function placeAt(grid, deal, spot) {
+    let cells = createPiece(deal.type, deal.letters, deal.target).cells;
+    if (spot.rot) cells = rotateCells(cells, SHAPES[deal.type].n, 1);
+    const g = grid.map(row => row.slice());
+    for (const c of cells) g[spot.y + c.y][spot.x + c.x] = c.tgt ? { ch: c.ch, tgt: c.tgt } : { ch: c.ch };
+    return g;
+  }
+
+  function pickIndex(weights, rng) {
+    let total = 0;
+    for (const w of weights) total += w;
+    let r = rng() * total;
+    for (let i = 0; i < weights.length; i++) {
+      r -= weights[i];
+      if (r < 0) return i;
+    }
+    return weights.length - 1;
+  }
+
+  // Among hooks of the chosen length band: longer words and more board letters used weigh more,
+  // spots that bury empty cells much less.
+  const hookWeight = h => (h.len - 3) * (h.len - 3) * (1 + h.board) / (1 + 3 * h.holes);
+
   // Deals tetrominoes from a 7-bag and letters them so they stay usable:
   //  - letters are drawn from weighted frequencies, with a vowel quota that leans against the board
   //    (a consonant-heavy stack gets more vowels, a vowel-heavy one fewer)
@@ -451,7 +556,8 @@
   const api = {
     COLS, ROWS, SHAPES, TYPES, POINTS, TARGET_WINDOW, TARGET_BONUS, HOOK_MIN, HOOK_MAX, HOOK_RATE,
     isVowel, makeRng, buildDictionary, wordsMatching, emptyGrid, createPiece, rotateCells, collides, tryRotate,
-    findWords, applyGravity, scoreWord, vowelRatio, runsOf, PieceGenerator, TargetTracker,
+    findWords, applyGravity, scoreWord, vowelRatio, runsOf, landings, segments, findHooks, placeAt,
+    PieceGenerator, TargetTracker,
   };
   root.WordWellLogic = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

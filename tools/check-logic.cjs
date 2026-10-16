@@ -145,6 +145,45 @@ for (const [len, pre, suf] of [[5, 'c', ''], [6, '', 'er'], [7, 'st', 'ng'], [4,
 assert.deepStrictEqual(L.wordsMatching(dict, 3, 'ca', ''), [], 'hooks are 4+ letters');
 assert.deepStrictEqual(L.wordsMatching(dict, 8, 'st', ''), [], 'hooks are at most 7 letters');
 
+// --- hooks: board letters a piece can turn into a longer word
+const well = (...rows) => {
+  const g = L.emptyGrid();
+  for (const [y, x, s] of rows) [...s].forEach((ch, i) => { if (ch !== '.') g[y][x + i] = { ch }; });
+  return g;
+};
+const column = (g, x, top, s) => { [...s].forEach((ch, i) => { g[top + i][x] = { ch }; }); return g; };
+for (const t of L.TYPES) {
+  for (const land of L.landings(L.emptyGrid(), t)) {
+    assert.ok(land.rot === 0 || land.rot === 1, 'only the turns that keep reading order');
+    assert.ok(land.cells.some(c => c.y === L.ROWS - 1), 'an empty well: every piece rests on the floor');
+  }
+}
+// A nearly full well: only spots inside the well count.
+const full = L.emptyGrid();
+for (let y = 0; y < L.ROWS; y++) for (let x = 0; x < L.COLS; x++) if (x !== 4) full[y][x] = { ch: 'e' };
+assert.deepStrictEqual(L.landings(full, 'I').map(l => [l.rot, l.cells.map(c => c.x).join()]), [[1, '4,4,4,4']], 'only the upright I fits the one open column');
+assert.ok(L.TYPES.filter(t => t !== 'I').every(t => L.landings(full, t).length === 0), 'nothing else fits');
+
+let hooks = L.findHooks(well([19, 0, 'st']), 'I', dict);
+assert.ok(hooks.some(h => h.rot === 0 && h.x === 2 && h.y === 18 && h.dir === 'h' && h.pre === 'st' && h.words.includes('strong')), 'ST + an I across');
+hooks = L.findHooks(well([19, 6, 'ate']), 'I', dict);
+assert.ok(hooks.some(h => h.dir === 'h' && h.suf === 'ate' && h.words.includes('climate')), 'an I across to the left of ATE');
+hooks = L.findHooks(well([19, 0, 'pl..et']), 'O', dict);
+assert.ok(hooks.some(h => h.pre === 'pl' && h.suf === 'et' && h.words.includes('planet')), 'an O bridging PL..ET');
+hooks = L.findHooks(column(L.emptyGrid(), 4, 17, 'ing'), 'I', dict);
+assert.ok(hooks.some(h => h.rot === 1 && h.dir === 'v' && h.suf === 'ing' && h.words.includes('nothing')), 'an upright I on top of ING');
+assert.ok(hooks.every(h => h.rot === 0 || h.rot === 1));
+const reservedSt = well([19, 0, 'st']);
+reservedSt[19][0].tgt = reservedSt[19][1].tgt = 'stone';
+assert.deepStrictEqual(L.findHooks(reservedSt, 'I', dict), [], 'reserved tiles are never hooked');
+const quWell = L.emptyGrid();
+[{ ch: 'qu' }, { ch: 'i' }, { ch: 't' }].forEach((t, i) => { quWell[19][i] = t; });
+hooks = L.findHooks(quWell, 'I', dict);
+assert.ok(hooks.length && hooks.every(h => !h.pre.includes('q') && !h.suf.includes('q') && h.words.every(w => !w.includes('q'))), 'QU tiles never take part in hooks');
+// placeAt drops a dealt piece at a planned spot (rotation 1 = one clockwise turn).
+const placed = L.placeAt(L.emptyGrid(), { type: 'I', letters: ['w', 'o', 'r', 'd'] }, { rot: 1, x: 0, y: 16 });
+assert.deepStrictEqual([16, 17, 18, 19].map(y => placed[y][2] && placed[y][2].ch).join(''), 'word');
+
 // --- generator stats
 const gen = new L.PieceGenerator(dict, { rng: L.makeRng(1) });
 let vow = 0, n = 0, bad = 0; const freq = {}; const samples = {};
